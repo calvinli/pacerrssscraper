@@ -32,7 +32,7 @@ def send_email(entry, email_account, email_pass, email_to):
     s.starttls()
     s.login(email_account, email_pass)
 
-    info = parse(entry)
+    info = parse_entry(entry)
 
     message = MIMEText("""
 Case: {} ({})
