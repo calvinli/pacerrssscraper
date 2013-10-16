@@ -15,6 +15,7 @@ from email.mime.text import MIMEText
 from twitter import * # https://github.com/sixohsix/twitter/tree/master
 import re
 import argparse
+import traceback
 
 def get_feed(url):
     feed = feedparser.parse(url)
@@ -48,7 +49,7 @@ Time: {}
 
     message['Subject'] = "New PACER entry found by RSS Scraper"
     message['From'] = "PACER RSS Scraper"
-    s.sendmail(email_account, email_to, message)
+    s.send_message(email_account, email_to, message)
     s.quit()
 
 def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
@@ -57,7 +58,7 @@ def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
 
     info = parse_entry(entry)
 
-    message = "New doc in {} ({}): #{} {}. #Prenda {}".format(
+    message = "New doc in {} ({}): #{} {}. #PACER {}".format(
               info['case'][:30], info['court'],
               info['num'], info['description'][:50],
               info['link'])
@@ -116,11 +117,19 @@ it must contain twitter credentials.
 """
     def notify(entry):
         if email:
-            send_email(entry, creds['email_account'], creds['email_pass'],
-                              creds['email_to'])
+            try:
+                send_email(entry, creds['email_account'], creds['email_pass'],
+                                  creds['email_to'])
+            except Exception:
+                traceback.print_exc()
+
         if twitter:
-            send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
-                              creds['consumer_key'], creds['consumer_secret'] )
+            try:
+                send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
+                                  creds['consumer_key'], creds['consumer_secret'] )
+            except Exception:
+                traceback.print_exc()
+
     return notify
 
 def scrape(courts, cases, notifier):
@@ -192,6 +201,7 @@ if __name__ == '__main__':
                       ],
               "ilnd": ["280638", # Duffy v. Godfread et. al
                        "284511", # Prenda v. Internets
+                       "287443", # new Malibu Media v. Doe case, 13-cv-50286
                       ],
             }
 
