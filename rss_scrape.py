@@ -49,7 +49,7 @@ Time: {}
 
     message['Subject'] = "New PACER entry found by RSS Scraper"
     message['From'] = "PACER RSS Scraper"
-    s.send_message(email_account, email_to, message)
+    s.send_message(message, from_addr=email_account, to_addrs=email_to)
     s.quit()
 
 def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
