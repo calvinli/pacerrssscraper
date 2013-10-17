@@ -38,7 +38,7 @@ def send_email(entry, email_account, email_pass, email_to):
     message = MIMEText("""
 Case: {} ({})
 Document #: {}
-Description:
+Description: {}
 Link: {}
 Time: {}
 """.format(info['case'], info['court'],
