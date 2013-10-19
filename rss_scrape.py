@@ -17,9 +17,11 @@ import re
 import argparse
 import traceback
 
+
 def get_feed(url):
     feed = feedparser.parse(url)
     
+    # one time this line failed, saying that feed['status'] didn't exist
     if feed['status'] != 200:
         raise Exception("Getting PACER RSS feed {} failed with code {}.".format(
                             feed['href'], feed['status']))
@@ -126,19 +128,26 @@ it must contain twitter credentials.
         if twitter:
             try:
                 send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
-                                  creds['consumer_key'], creds['consumer_secret'] )
+                           creds['consumer_key'], creds['consumer_secret'] )
             except Exception:
                 traceback.print_exc()
 
     return notify
 
-def scrape(courts, cases, notifier):
-    pacer_feeds = {court: get_feed(url) for court, url in courts.items()}
+def scrape(cases, notifier):
+    print("Loading feeds...")
+    pacer_feeds = {court: get_feed(
+        "https://ecf.{}.uscourts.gov/cgi-bin/rss_outside.pl".format(court) )
+                   for court in cases}
+    print("All feeds loaded.")
 
     last_seen = get_last_time()
 
     # Go through each court
     for court, feed in pacer_feeds.items():
+        print("Checking {} for {}.".format(
+            court.upper(), ", ".join(cases[court]) ) )
+
         # Go through each element
         for entry in feed['entries']:
             # check to see if we've already seen this
@@ -166,8 +175,12 @@ def set_kill_switch():
         f.write("script disabled\n")
 
 def kill_switch_set():
-    with open(KILL_SWITCH, 'r') as f:
-        return len(f.readline()) > 2
+    try:
+        with open(KILL_SWITCH, 'r') as f:
+            return len(f.readline()) > 2
+    except IOError:
+        # we don't have a killswitch. excellent.
+        return False
 
 LAST_TIME = os.path.dirname( os.path.realpath(__file__) )+"/lasttime"
 def set_last_time(time):
@@ -175,24 +188,21 @@ def set_last_time(time):
     with open(LAST_TIME, 'w') as f:
         f.write(str(int(time)) + "\n")
 def get_last_time():
-    with open(LAST_TIME, 'r') as f:
-        return int(f.readline())
+    try:
+        with open(LAST_TIME, 'r') as f:
+            return int(f.readline())
+    except IOError: # i.e. file doesn't exist yet
+        return 0 # this is interpreted as a Unix time and so should be safe...
 
-#
-#
-#
+
+###################
+
 if __name__ == '__main__':
     if kill_switch_set():
         print("killswitch set. not scraping.")
         sys.exit()
+ 
 
-
-    courts = {
-              "cacd": "https://ecf.cacd.uscourts.gov/cgi-bin/rss_outside.pl",
-              "cand": "https://ecf.cand.uscourts.gov/cgi-bin/rss_outside.pl",
-              "ilnd": "https://ecf.ilnd.uscourts.gov/cgi-bin/rss_outside.pl",
-             }
-    
     cases = {
               "cacd": ["543744", # Ingenuity 13 v. Doe (Wright)
                       ],
@@ -224,13 +234,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     notifier = make_notifier(email=args.email, twitter=args.twitter, creds = {
-'email_account': args.e_from,
-'email_pass': args.e_pass,
-'email_to': args.e_to,
-'oauth_token': args.t_oauth_token,
-'oauth_secret': args.t_oauth_secret,
-'consumer_key': args.t_consumer_key,
-'consumer_secret': args.t_consumer_secret
-})
-
-    scrape(courts, cases, notifier)
+        'email_account': args.e_from,
+        'email_pass': args.e_pass,
+        'email_to': args.e_to,
+        'oauth_token': args.t_oauth_token,
+        'oauth_secret': args.t_oauth_secret,
+        'consumer_key': args.t_consumer_key,
+        'consumer_secret': args.t_consumer_secret
+    })
+    
+    scrape(cases, notifier)
