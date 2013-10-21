@@ -60,9 +60,15 @@ def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
 
     info = parse_entry(entry)
 
-    message = "New doc in {} ({}): #{} {}. #PACER {}".format(
-              info['case'][:30], info['court'],
-              info['num'], info['description'][:50],
+    def truncate(string, num):
+        if len(string) > num:
+            return string[:num-3] + "..."
+        else:
+            return string
+
+    message = "New #PACER doc in {} ({}): #{} {}. {}".format(
+              truncate(info['case'], 35), info['court'],
+              info['num'], truncate(info['description'], 45),
               info['link'])
 
     twitter.statuses.update(status=message)
@@ -104,7 +110,7 @@ time, description.
     info['time'] = entry['published_parsed'] # this is a time.struct_time
 
     # The description of the entry
-    p = re.compile("\[(.+)\] \(<a")
+    p = re.compile("^\[(.+)\]")
     info['description'] = p.search(entry['summary'])
     info['description'] = (info['description'].group(1) if info['description'] else "?") 
 
