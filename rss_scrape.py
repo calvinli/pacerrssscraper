@@ -215,11 +215,13 @@ if __name__ == '__main__':
               "cand": ["254869", # AF Holdings v. Navasca (Chen/Vadas)
                        "254879", # AF Holdings v. Trinh
                       ],
+              "ctd" : ["98605",  # AF Holdings v. Olivas
+                      ],
               "ilnd": ["280638", # Duffy v. Godfread et. al
                        "284511", # Prenda v. Internets
                        "287443", # new Malibu Media v. Doe case, 13-cv-50286
                       ],
-              "flmD": ["276288", # FTV v. Oppold
+              "flmd": ["276288", # FTV v. Oppold
                       ],
             }
 
