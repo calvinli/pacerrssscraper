@@ -232,7 +232,6 @@ if __name__ == '__main__':
                       ],
               "flmd": ["276288", # FTV v. Oppold
                       ],
-              "wied": ["63285",  # Malibu Media v. Doe suit (EFF amicus)
             }
 
     #
