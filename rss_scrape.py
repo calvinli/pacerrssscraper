@@ -16,7 +16,7 @@ from twitter import * # https://github.com/sixohsix/twitter/tree/master
 import re
 import argparse
 import traceback
-
+import sqlite3
 
 def get_feed(url):
     feed = feedparser.parse(url)
@@ -147,6 +147,9 @@ def scrape(cases, notifier):
                    for court in cases}
     print("All feeds loaded.")
 
+#    conn = sqlite3.connect(DATABASE)
+#    c = conn.cursor()
+
     last_seen = get_last_time()
 
     # Go through each court
@@ -172,10 +175,14 @@ def scrape(cases, notifier):
 
     print("Scrape completed.")
 
+#    conn.commit()
+#    c.close()
+
 #
 # Ancillary files
 #
-KILL_SWITCH = os.path.dirname( os.path.realpath(__file__) )+"/killswitch"
+CWD = os.path.dirname( os.path.realpath(__file__) )
+KILL_SWITCH = CWD+"/killswitch"
 def set_kill_switch():
     with open(KILL_SWITCH, 'w') as f:
         f.write("script disabled\n")
@@ -188,7 +195,7 @@ def kill_switch_set():
         # we don't have a killswitch. excellent.
         return False
 
-LAST_TIME = os.path.dirname( os.path.realpath(__file__) )+"/lasttime"
+LAST_TIME = CWD+"/lasttime"
 def set_last_time(time):
     """Time should be a numerical type corresponding to Unix timestamp."""
     with open(LAST_TIME, 'w') as f:
@@ -200,6 +207,7 @@ def get_last_time():
     except IOError: # i.e. file doesn't exist yet
         return 0 # this is interpreted as a Unix time and so should be safe...
 
+DATABASE = CWD+"/data.db"
 
 ###################
 
@@ -220,9 +228,11 @@ if __name__ == '__main__':
               "ilnd": ["280638", # Duffy v. Godfread et. al
                        "284511", # Prenda v. Internets
                        "287443", # new Malibu Media v. Doe case, 13-cv-50286
+                       "287310", # Malibu Media v. Doe, 13-cv-06312 (@PeoriaAttorney)
                       ],
               "flmd": ["276288", # FTV v. Oppold
                       ],
+              "wied": ["63285",  # Malibu Media v. Doe suit (EFF amicus)
             }
 
     #
