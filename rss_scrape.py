@@ -3,7 +3,7 @@
 #
 # Script to scrape PACER RSS feeds to look for cases of interest.
 #
-# Calvin Li, 2013-10-07
+# Author: Calvin Li
 # Licensed under the WTFPLv2
 #
 import feedparser
@@ -15,27 +15,25 @@ from email.mime.text import MIMEText
 from twitter import * # https://github.com/sixohsix/twitter/tree/master
 import re
 import argparse
-import traceback
 import sqlite3
 
 def get_feed(url):
     feed = feedparser.parse(url)
     
-    # one time this line failed, saying that feed['status'] didn't exist
+    if 'status' not in feed:
+        raise Exception("Getting feed {} failed.".format(url))
     if feed['status'] != 200:
-        raise Exception("Getting PACER RSS feed {} failed with code {}.".format(
+        raise Exception("Getting feed {} failed with code {}.".format(
                             feed['href'], feed['status']))
     return feed
 
+def send_email(info, email_account, email_pass, email_to):
+    """info should be the result of calling parse_entry()."""
 
-
-def send_email(entry, email_account, email_pass, email_to):
     s = smtplib.SMTP()
     s.connect("smtp.gmail.com", 587)
     s.starttls()
     s.login(email_account, email_pass)
-
-    info = parse_entry(entry)
 
     message = MIMEText("""
 Case: {} ({})
@@ -54,11 +52,10 @@ Time: {}
     s.send_message(message, from_addr=email_account, to_addrs=email_to)
     s.quit()
 
-def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
+def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
     twitter = Twitter(auth=OAuth(oauth_token, oauth_secret,
                                  consumer_key, consumer_secret))
-
-    info = parse_entry(entry)
+    """info should be the result of calling parse_entry()."""
 
     def truncate(string, num):
         if len(string) > num:
@@ -66,7 +63,7 @@ def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
         else:
             return string
 
-    message = "New #PACER doc in {} ({}): #{} {}. {}".format(
+    message = "New doc in {} ({}): #{} {}. #Prenda {}".format(
               truncate(info['case'], 35), info['court'],
               info['num'], truncate(info['description'], 45),
               info['link'])
@@ -125,121 +122,94 @@ it must contain twitter credentials.
 """
     def notify(entry):
         if email:
-            try:
-                send_email(entry, creds['email_account'], creds['email_pass'],
-                                  creds['email_to'])
-            except Exception:
-                traceback.print_exc()
-
+            send_email(entry, creds['email_account'], creds['email_pass'],
+                              creds['email_to'])
         if twitter:
-            try:
-                send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
-                           creds['consumer_key'], creds['consumer_secret'] )
-            except Exception:
-                traceback.print_exc()
-
+            send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
+                       creds['consumer_key'], creds['consumer_secret'] )
     return notify
 
-def scrape(cases, notifier):
+def scrape(cases, courts_checked, notifier):
+    """Scrape the given cases.
+
+    Arguments:
+    - cases: dictionary from courts to PACER numbers
+    - courts_checked: dictionary from courts to when they were last checked
+    - notifier: object (made using make_notifier) to call with new stuff
+
+    Returns a dictionary from court names to when they were last updated.
+    """
     print("Loading feeds...")
     pacer_feeds = {court: get_feed(
         "https://ecf.{}.uscourts.gov/cgi-bin/rss_outside.pl".format(court) )
                    for court in cases}
     print("All feeds loaded.")
 
-#    conn = sqlite3.connect(DATABASE)
-#    c = conn.cursor()
+    courts_updated = courts_checked.copy()
 
-    last_seen = get_last_time()
+    # Build up a dict of entries keyed by the document URL.
+    # This prevents the issue of multiple RSS entries for
+    # the same document.
+    entries = {}
 
     # Go through each court
     for court, feed in pacer_feeds.items():
-        print("Checking {} for {}.".format(
-            court.upper(), ", ".join(cases[court]) ) )
+        if time.mktime(feed['feed']['updated_parsed']) <= courts_checked[court]:
+            print("{} has not been updated since last time.".format(
+                  court.upper() ) 
+                 )
+            continue
+        else:
+            courts_updated[court] = time.mktime(feed['feed']['updated_parsed'])
 
-        # Go through each element
+        print("Checking {} for {}.".format(
+            court.upper(),
+            ", ".join( ["{} ({})".format(
+                c[0], c[1]) for c in cases[court]] )))
+
         for entry in feed['entries']:
-            # check to see if we've already seen this
-            if time.mktime(entry['published_parsed']) <= last_seen:
+            if time.mktime(entry['published_parsed']) < courts_checked[court]:
                 break 
 
             # see if any cases of interest show up
-            if entry['link'].split("?")[-1] in cases[court]:
+            case_num = entry['link'].split("?")[-1]
+            if case_num in (case[0] for case in cases[court]):
+                # print raw dict to stdout for debugging/testing purposes
                 print(entry)
-                notifier(entry)
 
-                # Next time, ignore all entries at or before this time.
-                #   this system could fail if courts are on a significant lag
-                #   relative to each other
-                set_last_time(time.mktime( entry['published_parsed']) )
+                info = parse_entry(entry)
+
+                # override the case name if we have a manually-set one
+                case_name = cases[court][case_num][1]
+                if len(case_name) > 1:
+                    info['case'] = case_name
+
+                if info['link'] in entries:
+                    ### WARNING: to my knowledge this has never been tested IRL
+                    entries[info['link']]['description'] += "/"+info['description']
+                else:
+                    entries[info['link']] = info
+
+    for e in entries.values():
+        notifier(e)
 
     print("Scrape completed.")
 
-#    conn.commit()
-#    c.close()
-
-#
-# Ancillary files
-#
-CWD = os.path.dirname( os.path.realpath(__file__) )
-KILL_SWITCH = CWD+"/killswitch"
-def set_kill_switch():
-    with open(KILL_SWITCH, 'w') as f:
-        f.write("script disabled\n")
-
-def kill_switch_set():
-    try:
-        with open(KILL_SWITCH, 'r') as f:
-            return len(f.readline()) > 2
-    except IOError:
-        # we don't have a killswitch. excellent.
-        return False
-
-LAST_TIME = CWD+"/lasttime"
-def set_last_time(time):
-    """Time should be a numerical type corresponding to Unix timestamp."""
-    with open(LAST_TIME, 'w') as f:
-        f.write(str(int(time)) + "\n")
-def get_last_time():
-    try:
-        with open(LAST_TIME, 'r') as f:
-            return int(f.readline())
-    except IOError: # i.e. file doesn't exist yet
-        return 0 # this is interpreted as a Unix time and so should be safe...
-
-DATABASE = CWD+"/data.db"
+    return courts_updated
 
 ###################
 
+
 if __name__ == '__main__':
-    if kill_switch_set():
-        print("killswitch set. not scraping.")
-        sys.exit()
- 
-
-    cases = {
-              "cacd": ["543744", # Ingenuity 13 v. Doe (Wright)
-                      ],
-              "cand": ["254869", # AF Holdings v. Navasca (Chen/Vadas)
-                       "254879", # AF Holdings v. Trinh
-                      ],
-              "ctd" : ["98605",  # AF Holdings v. Olivas
-                      ],
-              "ilnd": ["280638", # Duffy v. Godfread et. al
-                       "284511", # Prenda v. Internets
-                       "287443", # new Malibu Media v. Doe case, 13-cv-50286
-                       "287310", # Malibu Media v. Doe, 13-cv-06312 (@PeoriaAttorney)
-                      ],
-              "flmd": ["276288", # FTV v. Oppold
-                      ],
-              "wied": ["63285",  # Malibu Media v. Doe suit (EFF amicus)
-                      ]
-            }
-
     #
     # Get command-line arguments.
     # 
     parser = argparse.ArgumentParser()
+    
+    # database of cases
+    parser.add_argument("--db", action='store')
+
+    # notification stuff
     parser.add_argument("--email", action='store_true')
     parser.add_argument("--twitter", action='store_true')
     
@@ -253,7 +223,28 @@ if __name__ == '__main__':
     parser.add_argument("--t-consumer-secret", action='store')
 
     args = parser.parse_args()
-    
+
+    # ------------------------------
+
+    cases = {}
+    courts_checked = {}
+
+    CWD = os.path.dirname( os.path.realpath(__file__) )
+    conn = sqlite3.connect(CWD+"/"+args.db)
+    c = conn.cursor()
+    c.execute("SELECT * FROM cases;")
+
+    for court, case, name in c:
+        if court in cases:
+            cases[court].append( (case, name) )
+        else:
+            cases[court] = [ (case, name) ]
+
+    c.execute("SELECT * FROM updated;")
+
+    for court, checked in c:
+        courts_checked[court] = int(checked)
+
     notifier = make_notifier(email=args.email, twitter=args.twitter, creds = {
         'email_account': args.e_from,
         'email_pass': args.e_pass,
@@ -264,4 +255,12 @@ if __name__ == '__main__':
         'consumer_secret': args.t_consumer_secret
     })
     
-    scrape(cases, notifier)
+
+    courts_updated = scrape(cases, courts_checked, notifier)
+
+    for court, updated in courts_updated.items():
+        c.execute("REPLACE INTO updated (court, time) VALUES (?, ?)",
+                  (court, updated))
+
+    conn.commit()
+    c.close()
