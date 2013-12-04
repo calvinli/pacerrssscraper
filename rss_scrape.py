@@ -64,12 +64,12 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
             return string
 
     message = "New doc in {} ({}): #{} {}. #Prenda {}".format(
-              truncate(info['case'], 35), info['court'],
-              info['num'], truncate(info['description'], 45),
+              truncate(info['case'], 30), info['court'],
+              info['num'], truncate(info['description'], 50),
               info['link'])
 
     twitter.statuses.update(status=message)
-
+    print("Successfully sent the following tweet: \"{}\"".format(message))
 
 def parse_entry(entry):
     """Extract the info out of an entry.
