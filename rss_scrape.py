@@ -180,7 +180,10 @@ def scrape(cases, courts_checked, notifier):
                 info = parse_entry(entry)
 
                 # override the case name if we have a manually-set one
-                case_name = cases[court][case_num][1]
+                #
+                # This is a bit of a kludge. I will have to investigate
+                # a better way of doing this.
+                case_name = [case[1] for case in cases[court] if case[0] == case_num][0]
                 if len(case_name) > 1:
                     info['case'] = case_name
 
