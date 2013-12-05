@@ -1,10 +1,34 @@
 #! /usr/bin/env python3
-
 #
 # Script to scrape PACER RSS feeds to look for cases of interest.
 #
 # Author: Calvin Li
-# Licensed under the WTFPLv2
+#
+# +-------------------------------------------------------------------------------+
+# |                                                                               |  
+# | The MIT License (MIT)                                                         |
+# |                                                                               |
+# | Copyright (c) 2013 Calvin Li                                                  |
+# |                                                                               |
+# | Permission is hereby granted, free of charge, to any person obtaining a copy  |
+# | of this software and associated documentation files (the "Software"), to deal |
+# | in the Software without restriction, including without limitation the rights  |
+# | to use, copy, modify, merge, publish, distribute, sublicense, and/or sell     |
+# | copies of the Software, and to permit persons to whom the Software is         |
+# | furnished to do so, subject to the following conditions:                      |
+# |                                                                               |
+# | The above copyright notice and this permission notice shall be included in    |
+# | all copies or substantial portions of the Software.                           |
+# |                                                                               |
+# | THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR    |
+# | IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,      |
+# | FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE   |
+# | AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER        |
+# | LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, |
+# | OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN     |
+# | THE SOFTWARE.                                                                 |
+# |                                                                               |
+# +-------------------------------------------------------------------------------+
 #
 import feedparser
 import time
@@ -79,12 +103,9 @@ time, description.
 """
     info = {}
 
-    # TODO: confirm that this works on all courts.
-
     # p.search() returns None if the search fails.
     # Annoyingly, I have already seen one instance
     # in which the RSS feed lacks certain fields.
-    #
 
     # extract the document number out of the link
     p = re.compile(">([0-9]+)<") 
@@ -129,13 +150,16 @@ it must contain twitter credentials.
                        creds['consumer_key'], creds['consumer_secret'] )
     return notify
 
-def scrape(cases, courts_checked, notifier):
+def scrape(cases, alias, courts_checked, notifier):
     """Scrape the given cases.
 
     Arguments:
     - cases: dictionary from courts to PACER numbers
+    - alias: dictionary from PACER numbers to custom case names
     - courts_checked: dictionary from courts to when they were last checked
     - notifier: object (made using make_notifier) to call with new stuff
+
+    Every PACER number in cases must have an alias, even if it's just "".
 
     Returns a dictionary from court names to when they were last updated.
     """
@@ -164,8 +188,7 @@ def scrape(cases, courts_checked, notifier):
 
         print("Checking {} for {}.".format(
             court.upper(),
-            ", ".join( ["{} ({})".format(
-                c[0], c[1]) for c in cases[court]] )))
+            ", ".join( ["{} ({})".format(num, alias[num]) for num in cases[court]] )))
 
         for entry in feed['entries']:
             if time.mktime(entry['published_parsed']) < courts_checked[court]:
@@ -173,17 +196,14 @@ def scrape(cases, courts_checked, notifier):
 
             # see if any cases of interest show up
             case_num = entry['link'].split("?")[-1]
-            if case_num in (case[0] for case in cases[court]):
+            if case_num in cases[court]:
                 # print raw dict to stdout for debugging/testing purposes
                 print(entry)
 
                 info = parse_entry(entry)
 
                 # override the case name if we have a manually-set one
-                #
-                # This is a bit of a kludge. I will have to investigate
-                # a better way of doing this.
-                case_name = [case[1] for case in cases[court] if case[0] == case_num][0]
+                case_name = alias[case_num]
                 if len(case_name) > 1:
                     info['case'] = case_name
 
@@ -231,6 +251,7 @@ if __name__ == '__main__':
 
     cases = {}
     courts_checked = {}
+    aliases = {}
 
     CWD = os.path.dirname( os.path.realpath(__file__) )
     conn = sqlite3.connect(CWD+"/"+args.db)
@@ -239,9 +260,10 @@ if __name__ == '__main__':
 
     for court, case, name in c:
         if court in cases:
-            cases[court].append( (case, name) )
+            cases[court].append( case )
         else:
-            cases[court] = [ (case, name) ]
+            cases[court] = [case]
+        aliases[case] = name
 
     c.execute("SELECT * FROM updated;")
 
@@ -258,8 +280,7 @@ if __name__ == '__main__':
         'consumer_secret': args.t_consumer_secret
     })
     
-
-    courts_updated = scrape(cases, courts_checked, notifier)
+    courts_updated = scrape(cases, aliases, courts_checked, notifier)
 
     for court, updated in courts_updated.items():
         c.execute("REPLACE INTO updated (court, time) VALUES (?, ?)",
