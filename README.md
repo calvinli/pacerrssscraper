@@ -36,10 +36,10 @@ These are the only courts that this script can monitor.
 ```python
 ["almd", "alsd", "ared", "arwd", "cacd", "cand", "ctd",
  "dcd", "flmd", "flsd", "gamd", "gud", "idd", "ilcd",
- "ilnd", "iand", "iasd", "ksd", "kywd", "laed", "lamd",
- "lawd", "mied", "miwd", "moed", "mowd", "mtd", "ned",
- "nhd", "njd", "nyed", "nynd", "nced", "ncmd", "ncwd",
- "nmid", "ohnd", "ohsd", "okwd", "paed", "pawd", "prd",
- "rid", "sdd", "tned", "tnmd", "txed", "txsd", "utd",
- "vtd", "vid", "vawd", "wvnd", "wied", "wiwd"]
+ "ilnd", "iand", "iasd", "innd", "ksd", "kywd", "laed",
+"lamd", "lawd", "mied", "miwd", "moed", "mowd", "mtd",
+"ned", "nhd", "njd", "nyed", "nynd", "nced", "ncmd", 
+"ncwd", "nmid", "ohnd", "ohsd", "okwd", "paed", "pawd", 
+"prd", "rid", "sdd", "tned", "tnmd", "txed", "txsd", 
+"utd", "vtd", "vid", "vawd", "wvnd", "wied", "wiwd"]
 ```
