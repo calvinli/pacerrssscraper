@@ -68,15 +68,14 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
                                  consumer_key, consumer_secret))
     """info should be the result of calling parse_entry()."""
 
-    def truncate(string, num):
-        if len(string) > num:
-            return string[:num-3] + "..."
-        else:
-            return string
+    # truncate the description to fit
+    if len(info['case']) + len(info['description']) > 90:
+        space = 90 - len(info['case'])
+        info['description'] = info['description'][:space-3] + "..."
 
-    message = "New doc in {} ({}): #{} {}. #Prenda {}".format(
-              truncate(info['case'], 30), info['court'],
-              info['num'], truncate(info['description'], 50),
+    message = "New doc in {} ({}): #{} {}. {}".format(
+              info['case'], info['court'],
+              info['num'], info['description'],
               info['link'])
 
     twitter.statuses.update(status=message)
