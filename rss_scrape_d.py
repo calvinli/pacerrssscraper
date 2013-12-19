@@ -42,16 +42,19 @@ from datetime import datetime, timedelta
 from calendar import timegm
 import sys
 import os
+import signal
 from twitter import * # https://github.com/sixohsix/twitter/tree/master
 import re
 import argparse
 import sqlite3
+import traceback
 
-SILENCE = False
-old_print = print
-def print(*args, **kwargs):
-    if not SILENCE:
-        return old_print(*args, **kwargs)
+LOG_LEVEL = 0
+def log(level, *args, **kwargs):
+    if level <= LOG_LEVEL:
+        args = list(args)
+        args.insert(0, "[{} UTC] ".format(asctime(gmtime())))
+        return print(*args, **kwargs)
 
 def get_feed(url):
     feed = feedparser.parse(url)
@@ -79,7 +82,7 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
               info['link'])
 
     twitter.statuses.update(status=message)
-    print("Successfully sent the following tweet: \"{}\"".format(message))
+    log(0, "Successfully sent the following tweet: \"{}\"".format(message))
 
 def parse_entry(entry):
     """Extract the info out of an entry.
@@ -144,13 +147,13 @@ def scrape(court, cases, alias, last_checked, notifier):
 
     Returns when the scraped feed was generated as a struct_time.
     """
-    print("[{} UTC]  checking {} for entries in ".format(asctime(gmtime()), court) +
-          ", ".join(["{} ({})".format(num, alias[num]) for num in cases]) + 
-          " since {} UTC".format(asctime(last_checked)))
+    log(2, "checking {} for entries in ".format(court) +
+           ", ".join(["{} ({})".format(num, alias[num]) for num in cases]) + 
+           " since {} UTC".format(asctime(last_checked)))
 
     feed = get_feed(
             "https://ecf.{}.uscourts.gov/cgi-bin/rss_outside.pl".format(court))
-    print("[{} UTC]  Feed downloaded.".format(asctime(gmtime())))
+    log(2, "Feed downloaded.")
 
     # Build up a dict of entries keyed by the document URL.
     # This handles when there are multiple RSS entries for
@@ -161,7 +164,7 @@ def scrape(court, cases, alias, last_checked, notifier):
     if last_updated <= last_checked:
         # Feed has not been updated since last time.
         # Exit without scraping.
-        print("[{} UTC]  Feed has not been updated.".format(asctime(gmtime())))
+        log(2, "Feed has not been updated.")
         return last_updated
 
     for entry in feed['entries']:
@@ -174,7 +177,7 @@ def scrape(court, cases, alias, last_checked, notifier):
         case_num = entry['link'].split("?")[-1]
         if case_num in cases:
             # print raw dict to stdout for debugging/testing purposes
-            print(entry)
+            log(0, entry)
 
             info = parse_entry(entry)
 
@@ -192,7 +195,7 @@ def scrape(court, cases, alias, last_checked, notifier):
     for e in list(entries.values())[::-1]:
         notifier(e)
 
-    print("Scrape of {} completed.".format(court))
+    log(2, "Scrape of {} completed.".format(court))
 
     return last_updated
 
@@ -200,7 +203,18 @@ def scrape(court, cases, alias, last_checked, notifier):
 
 
 if __name__ == '__main__':
-    print("[{} UTC]  Starting...".format(asctime(gmtime())))
+    log(0, "Starting...")
+
+    log(0, "We are process {}".format(os.getpid()))
+
+    # set up a SIGTERM handler:
+    def quit(signal, frame):
+        log(0, "Received SIGTERM. Quitting.\n--------------------\n")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, quit)
+
+    # ---------------------------
+
     #
     # Get command-line arguments.
     # 
@@ -208,6 +222,8 @@ if __name__ == '__main__':
     
     # database of cases
     parser.add_argument("--db", action='store')
+
+    parser.add_argument("--verbose", "-v", action='count')
 
     # notification stuff
     parser.add_argument("--twitter", action='store_true')
@@ -219,6 +235,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    DB = args.db
+    LOG_LEVEL = args.verbose
+ 
     notifier = make_notifier(twitter=args.twitter, creds = {
         'oauth_token': args.t_oauth_token,
         'oauth_secret': args.t_oauth_secret,
@@ -233,11 +252,12 @@ if __name__ == '__main__':
     aliases = {}
 
     CWD = os.path.dirname( os.path.realpath(__file__) )
-    conn = sqlite3.connect(CWD+"/"+args.db)
+    conn = sqlite3.connect(CWD+"/"+DB)
     c = conn.cursor()
     c.execute("SELECT * FROM cases;")
 
     for court, case, name in c:
+        case = str(case)
         if court in cases:
             cases[court].append( case )
         else:
@@ -255,28 +275,37 @@ if __name__ == '__main__':
     # This should not hit anything.
     last_updated = {}
     next_check = {}
-
+    
     for court in cases:
-        SILENCE = True
-        updated_struct = scrape(court, cases[court], aliases, gmtime(), notifier) 
-        SILENCE = False
+        old_loglevel = LOG_LEVEL
+        LOG_LEVEL = 0
+        updated_struct = scrape(court, cases[court], aliases, gmtime(0), notifier) 
+        LOG_LEVEL = old_loglevel
+
         last_updated[court] = datetime.utcfromtimestamp(timegm(updated_struct))
         next_check[court] = last_updated[court] + CHECK_INTERVAL
 
-        print("[{} UTC]  {} will be checked at {} UTC.".format(asctime(gmtime()),
-                                                               court,
-                                                               asctime(next_check[court].timetuple())))
+        log(2, "{} will be checked at {} UTC.".format(court,
+                                                      asctime(next_check[court].timetuple())))
 
-    print("[{} UTC]  Completed calibration. Entering main loop...\n\n".format(asctime(gmtime())))
+    log(0, "Completed calibration. Entering main loop...")
 
     # Main loop
     while True:
-        print("[{} UTC]  Running checks...".format(asctime(gmtime())))
+        log(1, "Running checks...")
         for court, check_time in next_check.items():
             if check_time - datetime.utcnow() < timedelta(seconds=60):
-                last_updated[court] = datetime.utcfromtimestamp(timegm(
-                                        scrape(court, cases[court], aliases, last_updated[court].timetuple(), notifier) 
-                                      ))
+                try:
+                    last_updated[court] = datetime.utcfromtimestamp(timegm(
+                                            scrape(court,
+                                                   cases[court],
+                                                   aliases,
+                                                   last_updated[court].timetuple(),
+                                                   notifier) 
+                                          ))
+                except:
+                    traceback.print_exc()
+                    continue
 
                 # by default, set the next check close to when we think
                 # it will next be updated
@@ -290,9 +319,7 @@ if __name__ == '__main__':
                 if next_check[court] < datetime.utcnow():
                     next_check[court] = datetime.utcnow() + CHECK_INTERVAL
 
-                print("[{} UTC]  {} will be next checked at {} UTC.".format(asctime(gmtime()),
-                                                                            court,
-                                                                            asctime(next_check[court].timetuple())))
-        print("\n") 
+                log(2, "{} will be next checked at {} UTC.".format(court,
+                                        asctime(next_check[court].timetuple())))
         # keep at least a modicum of sanity
         sleep(300)
