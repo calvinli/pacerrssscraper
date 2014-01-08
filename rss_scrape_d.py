@@ -81,8 +81,11 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
               info['num'], info['description'],
               info['link'])
 
-    twitter.statuses.update(status=message)
-    log(0, "Successfully sent the following tweet: \"{}\"".format(message))
+    try:
+        twitter.statuses.update(status=message)
+        log(0, "Successfully sent the following tweet: \"{}\"".format(message))
+    except TwitterHTTPError:
+        log(0, "Tweet failed. Probably a duplicate.")
 
 def parse_entry(entry):
     """Extract the info out of an entry.
