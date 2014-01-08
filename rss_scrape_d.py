@@ -162,6 +162,8 @@ def scrape(court, cases, alias, last_checked, notifier):
     # This handles when there are multiple RSS entries for
     # the same document.
     entries = {}
+    # these have no document URLs and so get special treatment
+    no_doc_entries = []
 
     last_updated = feed['feed']['updated_parsed']
     if last_updated <= last_checked:
@@ -189,13 +191,15 @@ def scrape(court, cases, alias, last_checked, notifier):
             if len(case_name) > 1:
                 info['case'] = case_name
 
-            if info['link'] in entries:
+            if info['link'] == '?':
+                no_doc_entries.append(info)
+            elif info['link'] in entries:
                 ### WARNING: to my knowledge this has never been tested IRL
                 entries[info['link']]['description'] += "/"+info['description']
             else:
                 entries[info['link']] = info
 
-    for e in list(entries.values())[::-1]:
+    for e in (list(entries.values())+no_doc_entries)[::-1]:
         notifier(e)
 
     log(2, "Scrape of {} completed.".format(court))
