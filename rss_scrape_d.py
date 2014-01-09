@@ -48,6 +48,9 @@ import re
 import argparse
 import sqlite3
 import traceback
+import socket
+
+socket.setdefaulttimeout(5) 
 
 LOG_LEVEL = 0
 def log(level, *args, **kwargs):
