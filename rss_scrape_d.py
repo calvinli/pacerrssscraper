@@ -37,13 +37,15 @@
 # +-------------------------------------------------------------------------------+
 #
 import feedparser
-from time import asctime, gmtime,sleep
+from time import asctime, gmtime, strftime, sleep
 from datetime import datetime, timedelta
 from calendar import timegm
 import sys
 import os
 import signal
 from twitter import * # https://github.com/sixohsix/twitter/tree/master
+import smtplib
+from email.mime.text import MIMEText
 import re
 import argparse
 import sqlite3
@@ -69,6 +71,31 @@ def get_feed(url):
                             feed['href'], feed['status']))
     return feed
 
+def send_email(info, email_account, email_pass, email_to):
+    """info should be the result of calling parse_entry()."""
+
+    s = smtplib.SMTP()
+    s.connect("smtp.gmail.com", 587)
+    s.starttls()
+    s.login(email_account, email_pass)
+
+    message = MIMEText("""
+Case: {} ({})
+Document #: {}
+Description: {}
+Link: {}
+Time: {}
+""".format(info['case'], info['court'],
+           info['num'],
+           info['description'],
+           info['link'],
+           strftime("%a %b %d %H:%M:%S %Y", info['time'])))
+
+    message['Subject'] = "New PACER entry found by RSS Scraper"
+    message['From'] = "PACER RSS Scraper"
+    s.send_message(message, from_addr=email_account, to_addrs=email_to)
+    s.quit()
+
 def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
     twitter = Twitter(auth=OAuth(oauth_token, oauth_secret,
                                  consumer_key, consumer_secret))
@@ -89,6 +116,8 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
         log(0, "Successfully sent the following tweet: \"{}\"".format(message))
     except TwitterHTTPError:
         log(0, "Tweet failed. Probably a duplicate.")
+    except:
+        log(0, "Tweet failed, unknown error.")
 
 def parse_entry(entry):
     """Extract the info out of an entry.
@@ -127,13 +156,17 @@ time, description.
     info['description'] = p.search(entry['summary'])
     info['description'] = (info['description'].group(1) if info['description'] else "?") 
 
+    log(0, info)
     return info
 
 
-def make_notifier(creds, twitter=False):
+def make_notifier(creds, email=False, twitter=False):
     """Make a notifier function with access to credentials, etc.
 """
     def notify(entry):
+        if email:
+            send_email(entry, creds['email_account'], creds['email_pass'],
+                              creds['email_to'])
         if twitter:
             send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
                        creds['consumer_key'], creds['consumer_secret'] )
@@ -179,7 +212,7 @@ def scrape(court, cases, alias, last_checked, notifier):
         if entry['published_parsed'] < last_checked:
             # We have checked all new entries.
             # Return when this feed was updated.
-            return last_updated
+            break
  
         # see if any cases of interest show up
         case_num = entry['link'].split("?")[-1]
@@ -203,6 +236,8 @@ def scrape(court, cases, alias, last_checked, notifier):
                 entries[info['link']] = info
 
     for e in (list(entries.values())+no_doc_entries)[::-1]:
+        log(0, "reporting the following:")
+        log(0, e)
         notifier(e)
 
     log(2, "Scrape of {} completed.".format(court))
@@ -236,8 +271,13 @@ if __name__ == '__main__':
     parser.add_argument("--verbose", "-v", action='count')
 
     # notification stuff
-    parser.add_argument("--twitter", action='store_true')
+    # notification stuff
+    parser.add_argument("--email", action='store_true')
+    parser.add_argument("--e-from", action='store')
+    parser.add_argument("--e-pass", action='store')
+    parser.add_argument("--e-to", action='store')
 
+    parser.add_argument("--twitter", action='store_true')
     parser.add_argument("--t-oauth-token", action='store')
     parser.add_argument("--t-oauth-secret", action='store')
     parser.add_argument("--t-consumer-key", action='store')
@@ -248,13 +288,16 @@ if __name__ == '__main__':
     DB = args.db
     LOG_LEVEL = args.verbose
  
-    notifier = make_notifier(twitter=args.twitter, creds = {
+    notifier = make_notifier(email=args.email, twitter=args.twitter, creds = {
+        'email_account': args.e_from,
+        'email_pass': args.e_pass,
+        'email_to': args.e_to,
         'oauth_token': args.t_oauth_token,
         'oauth_secret': args.t_oauth_secret,
         'consumer_key': args.t_consumer_key,
         'consumer_secret': args.t_consumer_secret
-    })
-    
+    })    
+
     # ------------------------------
 
     # Load case and court information
@@ -282,22 +325,20 @@ if __name__ == '__main__':
 
     # Do an initial check of all courts, just
     # to find out when we should check them.
-    # This should not hit anything.
     last_updated = {}
     next_check = {}
     
+    old_loglevel = LOG_LEVEL
+    LOG_LEVEL = 0
     for court in cases:
-        old_loglevel = LOG_LEVEL
-        LOG_LEVEL = 0
         updated_struct = scrape(court, cases[court], aliases, gmtime(0), notifier) 
-        LOG_LEVEL = old_loglevel
 
         last_updated[court] = datetime.utcfromtimestamp(timegm(updated_struct))
         next_check[court] = last_updated[court] + CHECK_INTERVAL
 
         log(2, "{} will be checked at {} UTC.".format(court,
                                                       asctime(next_check[court].timetuple())))
-
+    LOG_LEVEL = old_loglevel
     log(0, "Completed calibration. Entering main loop...")
 
     # Main loop
@@ -322,8 +363,7 @@ if __name__ == '__main__':
                 next_check[court] = ( last_updated[court] +
                                       CHECK_INTERVAL )
                 
-                # Never let next_check[court] be in the past,
-                # which would cause us to stop checking that court.
+                # Never let next_check[court] be in the past.
                 # (That would otherwise happen in the case of, e.g., CACD,
                 #  which updates hourly rather than half-hourly.)
                 if next_check[court] < datetime.utcnow():
