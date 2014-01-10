@@ -3,7 +3,9 @@ pacer-rss
 
 Daemon that reads PACER RSS feeds and looks for updates in selected cases.
 
-If `--twitter` is set it will tweet about entries it finds.
+If `--twitter` is set it will tweet about entries it finds; if `--email` is
+set it will email new entries.
+(NB: Both require certain command-line arguments to be set.)
 
 This is in active development and should not be considered usable.
 (Just look at the commit log...)
@@ -37,8 +39,7 @@ flsd   404544    #MalibuMedia v. Pelizzo 12-22768
 wied   63285     #MalibuMedia v. Doe 13-536              
 innd   73135     #MalibuMedia v. Nguyen 13-163
 ```
-`name` overrides the official name of the case, which
-is often overly verbose.)
+`name`, which is required, overrides the official name of the case.)
 
 List of US District Courts with RSS feeds 
 -----------------------------------------

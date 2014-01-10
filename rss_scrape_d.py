@@ -52,10 +52,16 @@ import sqlite3
 import traceback
 import socket
 
-socket.setdefaulttimeout(5) 
+# PACER servers frequently have problems.
+# Ensure that connections don't hang.
+socket.setdefaulttimeout(10) 
 
 LOG_LEVEL = 0
 def log(level, *args, **kwargs):
+    """Logging with log levels and timestamps.
+
+Lower log levels = more important. All log messages with log level <=
+the global variable LOG_LEVEL are timestamped and printed to stdout."""
     if level <= LOG_LEVEL:
         args = list(args)
         args.insert(0, "[{} UTC] ".format(asctime(gmtime())))
@@ -64,6 +70,9 @@ def log(level, *args, **kwargs):
 def get_feed(url):
     feed = feedparser.parse(url)
     
+    # I'm not sure if these are actually necessary, as I believe
+    # feedparser returns an empty feed (i.e. feed['entries'] == [])
+    # in the case of errors.
     if 'status' not in feed:
         raise Exception("Getting feed {} failed.".format(url))
     if feed['status'] != 200:
@@ -113,11 +122,11 @@ def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
 
     try:
         twitter.statuses.update(status=message)
-        log(0, "Successfully sent the following tweet: \"{}\"".format(message))
+        log(1, "Successfully sent the following tweet: \"{}\"".format(message))
     except TwitterHTTPError:
-        log(0, "Tweet failed. Probably a duplicate.")
-    except:
-        log(0, "Tweet failed, unknown error.")
+        # TODO: Ensure that this TwitterHTTPError really is a 403 due to duplicate tweet.
+        #       If it isn't, we should re-raise the exception.
+        log(1, "Tweet failed. Probably a duplicate.")
 
 def parse_entry(entry):
     """Extract the info out of an entry.
@@ -128,8 +137,7 @@ time, description.
     info = {}
 
     # p.search() returns None if the search fails.
-    # Annoyingly, I have already seen one instance
-    # in which the RSS feed lacks certain fields.
+    # (Entries routinely lack several of these fields.)
 
     # extract the document number out of the link
     p = re.compile(">([0-9]+)<") 
@@ -156,7 +164,6 @@ time, description.
     info['description'] = p.search(entry['summary'])
     info['description'] = (info['description'].group(1) if info['description'] else "?") 
 
-    log(0, info)
     return info
 
 
@@ -211,7 +218,6 @@ def scrape(court, cases, alias, last_checked, notifier):
     for entry in feed['entries']:
         if entry['published_parsed'] < last_checked:
             # We have checked all new entries.
-            # Return when this feed was updated.
             break
  
         # see if any cases of interest show up
@@ -236,8 +242,8 @@ def scrape(court, cases, alias, last_checked, notifier):
                 entries[info['link']] = info
 
     for e in (list(entries.values())+no_doc_entries)[::-1]:
-        log(0, "reporting the following:")
-        log(0, e)
+        log(1, "reporting the following:")
+        log(1, e)
         notifier(e)
 
     log(2, "Scrape of {} completed.".format(court))
@@ -260,30 +266,18 @@ if __name__ == '__main__':
 
     # ---------------------------
 
-    #
     # Get command-line arguments.
-    # 
     parser = argparse.ArgumentParser()
-    
-    # database of cases
     parser.add_argument("--db", action='store')
-
     parser.add_argument("--verbose", "-v", action='count')
-
-    # notification stuff
-    # notification stuff
     parser.add_argument("--email", action='store_true')
-    parser.add_argument("--e-from", action='store')
-    parser.add_argument("--e-pass", action='store')
-    parser.add_argument("--e-to", action='store')
-
     parser.add_argument("--twitter", action='store_true')
-    parser.add_argument("--t-oauth-token", action='store')
-    parser.add_argument("--t-oauth-secret", action='store')
-    parser.add_argument("--t-consumer-key", action='store')
-    parser.add_argument("--t-consumer-secret", action='store')
-
+    for arg in ["--e-from", "--e-pass", "--e-to",
+                "--t-oauth-token", "--t-oauth-secret",
+                "--t-consumer-key", "--t-consumer-secret"]:
+        parser.add_argument(arg, action='store', default="")
     args = parser.parse_args()
+
 
     DB = args.db
     LOG_LEVEL = args.verbose
@@ -325,6 +319,11 @@ if __name__ == '__main__':
 
     # Do an initial check of all courts, just
     # to find out when we should check them.
+    #
+    # If anything fails during this stage, the program will
+    # exit with an unhandled exception. This is intentional.
+    # (So when starting this, ensure that it reaches the main loop.)
+    #
     last_updated = {}
     next_check = {}
     
@@ -339,7 +338,7 @@ if __name__ == '__main__':
         log(2, "{} will be checked at {} UTC.".format(court,
                                                       asctime(next_check[court].timetuple())))
     LOG_LEVEL = old_loglevel
-    log(0, "Completed calibration. Entering main loop...")
+    log(1, "Completed calibration. Entering main loop.")
 
     # Main loop
     while True:
@@ -355,11 +354,11 @@ if __name__ == '__main__':
                                                    notifier) 
                                           ))
                 except:
+                    # Never allow an exception during scraping to kill the program
                     traceback.print_exc()
                     continue
 
-                # by default, set the next check close to when we think
-                # it will next be updated
+                # Set the next check close to when we think it'll be updated
                 next_check[court] = ( last_updated[court] +
                                       CHECK_INTERVAL )
                 
@@ -371,5 +370,6 @@ if __name__ == '__main__':
 
                 log(2, "{} will be next checked at {} UTC.".format(court,
                                         asctime(next_check[court].timetuple())))
+        log(1, "Checks complete.")
         # keep at least a modicum of sanity
         sleep(300)
