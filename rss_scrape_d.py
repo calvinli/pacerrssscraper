@@ -236,8 +236,7 @@ def scrape(court, cases, alias, last_checked, notifier):
             if info['link'] == '?':
                 no_doc_entries.append(info)
             elif info['link'] in entries:
-                ### WARNING: to my knowledge this has never been tested IRL
-                entries[info['link']]['description'] += "/"+info['description']
+                entries[info['link']]['description'] += " // "+info['description']
             else:
                 entries[info['link']] = info
 
