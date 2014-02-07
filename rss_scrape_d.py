@@ -191,7 +191,7 @@ def scrape(court, cases, alias, last_checked, notifier):
 
     Every PACER number in cases must have an alias, even if it's just "".
 
-    Returns when the scraped feed was generated as a struct_time.
+    Returns when the scraped feed was generated as a datetime object.
     """
     log(2, "checking {} for entries in ".format(court) +
            ", ".join(["{} ({})".format(num, alias[num]) for num in cases]) + 
@@ -213,7 +213,7 @@ def scrape(court, cases, alias, last_checked, notifier):
         # Feed has not been updated since last time.
         # Exit without scraping.
         log(2, "Feed has not been updated.")
-        return last_updated
+        return datetime.utcfromtimestamp(timegm(last_updated))
 
     for entry in feed['entries']:
         if entry['published_parsed'] < last_checked:
@@ -246,26 +246,42 @@ def scrape(court, cases, alias, last_checked, notifier):
         notifier(e)
 
     log(2, "Scrape of {} completed.".format(court))
-
-    return last_updated
+    return datetime.utcfromtimestamp(timegm(last_updated))
 
 ###################
 
+def read_cases(filename):
+    cases = {}
+    aliases = {}
+
+    conn = sqlite3.connect(filename)
+    c = conn.cursor()
+    c.execute("SELECT * FROM cases;")
+
+    for court, case, name in c:
+        case = str(case)
+        if court in cases:
+            cases[court].append( case )
+        else:
+            cases[court] = [case]
+        aliases[case] = name
+
+    # conn.commit() # this is unnecessary as we do no writes
+    c.close()
+
+    return cases, aliases
 
 if __name__ == '__main__':
     log(0, "Starting...")
-
     log(0, "We are process {}".format(os.getpid()))
 
-    # set up a SIGTERM handler:
+    # set up a SIGTERM handler
     def quit(signal, frame):
         log(0, "Received SIGTERM. Quitting.\n--------------------\n")
         sys.exit(0)
     signal.signal(signal.SIGTERM, quit)
 
-    # ---------------------------
-
-    # Get command-line arguments.
+    # get command-line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", action='store')
     parser.add_argument("--verbose", "-v", action='count')
@@ -276,7 +292,6 @@ if __name__ == '__main__':
                 "--t-consumer-key", "--t-consumer-secret"]:
         parser.add_argument(arg, action='store', default="")
     args = parser.parse_args()
-
 
     DB = args.db
     LOG_LEVEL = args.verbose
@@ -293,82 +308,55 @@ if __name__ == '__main__':
 
     # ------------------------------
 
-    # Load case and court information
-    cases = {}
-    aliases = {}
-
-    CWD = os.path.dirname( os.path.realpath(__file__) )
-    conn = sqlite3.connect(CWD+"/"+DB)
-    c = conn.cursor()
-    c.execute("SELECT * FROM cases;")
-
-    for court, case, name in c:
-        case = str(case)
-        if court in cases:
-            cases[court].append( case )
-        else:
-            cases[court] = [case]
-        aliases[case] = name
-
-    conn.commit()
-    c.close()
-
     # Number of minutes to wait between checks of a given court.
     CHECK_INTERVAL = timedelta(minutes=35)
 
-    # Do an initial check of all courts, just
-    # to find out when we should check them.
-    #
-    # If anything fails during this stage, the program will
-    # exit with an unhandled exception. This is intentional.
-    # (So when starting this, ensure that it reaches the main loop.)
-    #
     last_updated = {}
     next_check = {}
-    
-    old_loglevel = LOG_LEVEL
-    LOG_LEVEL = 0
-    for court in cases:
-        updated_struct = scrape(court, cases[court], aliases, gmtime(0), notifier) 
-
-        last_updated[court] = datetime.utcfromtimestamp(timegm(updated_struct))
-        next_check[court] = last_updated[court] + CHECK_INTERVAL
-
-        log(2, "{} will be checked at {} UTC.".format(court,
-                                                      asctime(next_check[court].timetuple())))
-    LOG_LEVEL = old_loglevel
-    log(1, "Completed calibration. Entering main loop.")
 
     # Main loop
     while True:
-        log(1, "Running checks...")
-        for court, check_time in next_check.items():
-            if check_time - datetime.utcnow() < timedelta(seconds=60):
-                try:
-                    last_updated[court] = datetime.utcfromtimestamp(timegm(
-                                            scrape(court,
-                                                   cases[court],
-                                                   aliases,
-                                                   last_updated[court].timetuple(),
-                                                   notifier) 
-                                          ))
-                except:
-                    # Never allow an exception during scraping to kill the program
-                    traceback.print_exc()
-                    continue
+        # Load case and court information from database
+        cases, aliases = read_cases(os.path.dirname(os.path.realpath(__file__))+"/"+DB)
 
-                # Set the next check close to when we think it'll be updated
-                next_check[court] = ( last_updated[court] +
-                                      CHECK_INTERVAL )
-                
-                # Never let next_check[court] be in the past.
-                # (That would otherwise happen in the case of, e.g., CACD,
-                #  which updates hourly rather than half-hourly.)
-                if next_check[court] < datetime.utcnow():
-                    next_check[court] = datetime.utcnow() + CHECK_INTERVAL
+        # initialize any new courts
+        old_log_level, LOG_LEVEL = LOG_LEVEL, 0
+        for court in (cases.keys() - next_check.keys()):
+            log(0, "Adding {}.".format(court))
+            last_updated[court] = scrape(court, cases[court], aliases, gmtime(), notifier)
+            next_check[court] = last_updated[court] + CHECK_INTERVAL
+        # delete any removed courts
+        for court in (next_check.keys() - cases.keys()):
+            log(0, "Removing {}.".format(court))
+            del next_check[court]
+            del last_updated[court]
+        LOG_LEVEL = old_log_level
 
-                log(2, "{} will be next checked at {} UTC.".format(court,
-                                        asctime(next_check[court].timetuple())))
+
+        now = datetime.utcnow()
+
+        courts_to_check = list(filter(lambda c: next_check[c] < now, next_check));
+        log(1, "Checking {}...".format(", ".join(courts_to_check)))
+
+        for court in courts_to_check:
+            try:
+                last_updated[court] = scrape(court, cases[court], aliases,
+                                             last_updated[court].timetuple(),
+                                             notifier) 
+                next_check[court] = last_updated[court] + CHECK_INTERVAL
+            except:
+                # Never allow an exception during scraping to kill the program
+                traceback.print_exc()
+                continue
+            
+            # Never let next_check[court] be in the past.
+            # (That would otherwise happen in the case of, e.g., CACD,
+            #  which updates hourly rather than half-hourly.)
+            if next_check[court] < now:
+                next_check[court] = now + CHECK_INTERVAL
+
+            log(2, "{} will be next checked at {} UTC.".format(court,
+                                    asctime(next_check[court].timetuple())))
         log(1, "Checks complete.")
         # keep at least a modicum of sanity
         sleep(300)
