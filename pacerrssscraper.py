@@ -182,8 +182,8 @@ class RSSEntry:
         self.court = r.group(1) if r else "?"
 
         # PACER number
-        p = re.compile("DktRpt.pl?(0-9)+")
-        r = p.search(entry['id'])
+        p = re.compile("DktRpt.pl\?([0-9]+)")
+        r = p.search(entry['link'])
         self.pacer_num = r.group(1) if r else 0
         # 0 is potentially a valid PACER number though, so beware
 
@@ -345,7 +345,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", action='store')
     parser.add_argument("--log", action='store')
-    parser.add_argument("--verbose", "-v", action='count')
+    parser.add_argument("--verbose", "-v", action='count', default=0)
     parser.add_argument("--email", action='store_true')
     parser.add_argument("--twitter", action='store_true')
     for arg in ["--e-from", "--e-pass", "--e-to",
