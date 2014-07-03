@@ -1,12 +1,7 @@
 #! /usr/bin/env python3
 #
-#    _____               ______   __  __    ____    _   _ 
-#   |  __ \      /\     |  ____| |  \/  |  / __ \  | \ | |
-#   | |  | |    /  \    | |__    | \  / | | |  | | |  \| |
-#   | |  | |   / /\ \   |  __|   | |\/| | | |  | | | . ` |
-#   | |__| |  / ____ \  | |____  | |  | | | |__| | | |\  |
-#   |_____/  /_/    \_\ |______| |_|  |_|  \____/  |_| \_|
-#               for scraping PACER RSS feeds
+# PACER RSS feed scraper and reporter.
+#
 #
 # Author: Calvin Li
 #
@@ -14,7 +9,7 @@
 # |                                                                               |  
 # | The MIT License (MIT)                                                         |
 # |                                                                               |
-# | Copyright (c) 2013 Calvin Li                                                  |
+# | Copyright (c) 2013-2014 Calvin Li                                             |
 # |                                                                               |
 # | Permission is hereby granted, free of charge, to any person obtaining a copy  |
 # | of this software and associated documentation files (the "Software"), to deal |
@@ -37,7 +32,7 @@
 # +-------------------------------------------------------------------------------+
 #
 import feedparser
-from time import asctime, gmtime, strftime, sleep
+from time import asctime, gmtime, sleep
 from datetime import datetime, timedelta
 from calendar import timegm
 import sys
@@ -51,201 +46,246 @@ import argparse
 import sqlite3
 import traceback
 import socket
+from urllib.error import URLError
+from xml.sax import SAXException
+from collections import OrderedDict
+import logging, logging.handlers
+import html.parser
+# from html import unescape   # for python3.4.0+
 
 # PACER servers frequently have problems.
 # Ensure that connections don't hang.
 socket.setdefaulttimeout(10) 
 
-LOG_LEVEL = 0
-def log(level, *args, **kwargs):
-    """Logging with log levels and timestamps.
-
-Lower log levels = more important. All log messages with log level <=
-the global variable LOG_LEVEL are timestamped and printed to stdout."""
-    if level <= LOG_LEVEL:
-        args = list(args)
-        args.insert(0, "[{} UTC] ".format(asctime(gmtime())))
-        return print(*args, **kwargs)
+#### REMOVE FOR PYTHON 3.4.0+ ###
+_h = html.parser.HTMLParser()
+unescape = _h.unescape
 
 def get_feed(url):
     feed = feedparser.parse(url)
-    
-    # I'm not sure if these are actually necessary, as I believe
-    # feedparser returns an empty feed (i.e. feed['entries'] == [])
-    # in the case of errors.
-    if 'status' not in feed:
-        raise Exception("Getting feed {} failed.".format(url))
-    if feed['status'] != 200:
-        raise Exception("Getting feed {} failed with code {}.".format(
-                            feed['href'], feed['status']))
+
+    if feed.bozo and feed.bozo_exception:
+        raise feed.bozo_exception
+
     return feed
 
-def send_email(info, email_account, email_pass, email_to):
-    """info should be the result of calling parse_entry()."""
+def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
+    """entry should be an RSSEntry object."""
 
-    s = smtplib.SMTP()
-    s.connect("smtp.gmail.com", 587)
-    s.starttls()
-    s.login(email_account, email_pass)
-
-    message = MIMEText("""
-Case: {} ({})
-Document #: {}
-Description: {}
-Link: {}
-Time: {}
-""".format(info['case'], info['court'],
-           info['num'],
-           info['description'],
-           info['link'],
-           strftime("%a %b %d %H:%M:%S %Y", info['time'])))
-
-    message['Subject'] = "New PACER entry found by RSS Scraper"
-    message['From'] = "PACER RSS Scraper"
-    s.send_message(message, from_addr=email_account, to_addrs=email_to)
-    s.quit()
-
-def send_tweet(info, oauth_token, oauth_secret, consumer_key, consumer_secret):
     twitter = Twitter(auth=OAuth(oauth_token, oauth_secret,
                                  consumer_key, consumer_secret))
-    """info should be the result of calling parse_entry()."""
+
+    case = entry.case_name
+    title = entry.title
+    link = entry.link
+    number = entry.number if entry.number > 0 else "?"
+
+    # Shorten the case name
+    rules = [
+     ("Malibu Media", "#MalibuMedia"),
+     ("MALIBU MEDIA", "#MalibuMedia"),
+     (", LLC", ""),
+     (" LLC", ""),
+     (" v. ", " v "),
+     ("JOHN DOE SUBSCRIBER ASSIGNED IP ADDRESS ", ""),
+     ("John Doe Subscriber Assigned IP Address ", ""),
+     (" subscriber assigned IP address", ""),
+     ("JOHN DOE", "Doe"),
+     ("John Doe", "Doe")
+    ]
+
+    for r in rules:
+        case = case.replace(*r)
 
     # truncate the description to fit
-    if len(info['case']) + len(info['description']) > 90:
-        space = 90 - len(info['case'])
-        info['description'] = info['description'][:space-3] + "..."
+    if len(case) + len(title) > 100:
+        if len(case) > 60:
+            case = case[:57]+"..."
+        space = 100 - len(case)
+        title = title[:space-3] + "..."
 
-    message = "New doc in {} ({}): #{} {}. {}".format(
-              info['case'], info['court'],
-              info['num'], info['description'],
-              info['link'])
+    message = "{} ({}): #{} {}. ".format(
+              case, entry.court, number, title)
+
+    if len(message) > 120:
+        log.critical("Bad tweet truncation!")
+        return
+
+    message += entry.link
 
     try:
         twitter.statuses.update(status=message)
-        log(1, "Successfully sent the following tweet: \"{}\"".format(message))
+        log.info("Successfully sent the following tweet: \"{}\"".format(message))
     except TwitterHTTPError:
-        # TODO: Ensure that this TwitterHTTPError really is a 403 due to duplicate tweet.
-        #       If it isn't, we should re-raise the exception.
-        log(1, "Tweet failed. Probably a duplicate.")
+        log.exception("Tweet failed. Probably a duplicate.")
 
-def parse_entry(entry):
-    """Extract the info out of an entry.
+class RSSEntry:
+    """
+    This class encapsulates everything we know about
+    a new document from the RSS feed.
 
-Returns a dictionary containing the following keys: num, link, case, court,
-time, description.
-"""
-    info = {}
+    Fields
+    ----------
+    - title:         As given by the RSS feed, so this doesn't always
+                     match the actual title in the PDF / docket.
+                     From experience, this appears to be more of
+                     a categorization of the filing than its title.
+    - time_filed:    I am not sure if the provided date/time is accurate
+                     because there actually isn't any way to independently
+                     verify this information (time of filing
+                     does not appear anywhere in PACER).
+                     This is a time.struct_time.
+    - court:         The court in which the document was filed;
+                     equivalent to the 3rd LREF element.
+    - case:          The "caption", i.e. 4th element in the LREF
+    - case_name:     In human-readable form.
+    - pacer_num:     The internal "PACER" number of the case. This allows
+                     references to RECAP.
+    - docket_link:   The url of the PACER docket for this case.
+    - link*:         A link at which the document itself may be viewed.
+    - number*:       The number of the document within the docket.
 
-    # p.search() returns None if the search fails.
-    # (Entries routinely lack several of these fields.)
+    * Some entries are not numbered. In this case link will equal
+      docket_link and number will be 0. This will break LREF
+      and the second RECAP link.
 
-    # extract the document number out of the link
-    p = re.compile(">([0-9]+)<") 
-    info['num'] = p.search(entry['description'])
-    info['num'] = (info['num'].group(1) if info['num'] else "?")
+    Other attributes on-the-fly as defined below.
 
-    # get the link itself (to the actual document)
-    p = re.compile("href=\"(.*)\"") 
-    info['link'] = p.search(entry['description'])
-    info['link'] = (info['link'].group(1) if info['link'] else "?")
+    Re: LREF, see http://www.plainsite.org/articles/article.html?id=7
+    """
+    def __init__(self, entry):
+        """Construct an RSSEntry object out of the actual RSS entry."""
 
-    # if this doesn't exist I don't even...
-    info['case'] = " ".join(entry['title'].split(" ")[1:]) # strip the case # out
+        # code adapted from the old parse_entry()
 
-    p = re.compile("ecf\.([a-z]+)\.") # find the court
-    info['court'] = p.search(entry['link'])
-    # this definitely should exist though
-    info['court'] = (info['court'].group(1) if info['court'] else "?") 
+        # p.search() returns None if the search fails.
+        # (Entries routinely lack several of these fields.)
 
-    info['time'] = entry['published_parsed'] # this is a time.struct_time
+        # get the link itself (to the actual document)
+        p = re.compile("href=\"(.*)\"") 
+        r = p.search(entry['description'])
+        self._link = r.group(1) if r else ""
 
-    # The description of the entry
-    p = re.compile("^\[(.+)\]")
-    info['description'] = p.search(entry['summary'])
-    info['description'] = (info['description'].group(1) if info['description'] else "?") 
+        # extract the document number
+        p = re.compile(">([0-9]+)<") 
+        r = p.search(entry['description'])
+        self.number = int(r.group(1)) if r else 0
 
-    return info
+        # title
+        p = re.compile("^\[(.+)\]")
+        r = p.search(entry['summary'])
+        self.title = unescape(r.group(1)) if r else "?"
+
+        # court
+        p = re.compile("ecf\.([a-z]+)\.")
+        r = p.search(entry['link'])
+        self.court = r.group(1) if r else "?"
+
+        # PACER number
+        p = re.compile("DktRpt.pl?(0-9)+")
+        r = p.search(entry['id'])
+        self.pacer_num = r.group(1) if r else 0
+        # 0 is potentially a valid PACER number though, so beware
+
+        self.docket_link = entry['id']
+
+        self.case_name = unescape(" ".join(entry['title'].split(" ")[1:]))
+
+        self.case = entry['title'].split(" ")[0].replace(":", "-")
+        # strip judge initials out
+        self.case = self.case.split("-")
+        for part in self.case[3:]:
+            if part.isalpha():
+                self.case.remove(part)
+        self.case = "-".join(self.case)
+
+        self.time_filed = entry['published_parsed']
+
+    @property
+    def RECAP_links(self):
+        """Get the RECAP links for this case and document.
+        
+        Because of RECAP's standardized URL system, we know
+        what the URL of a document will be even before the
+        document is posted there.
+        
+        This returns a 2-tuple of strings, the first of which
+        is the URL of the case and the second, the URL
+        of the document.
+        
+        Out of necessity, neither is verified.
+        """
+        RECAP_case = "gov.uscourts.{}.{}".format(self.court, self.pacer_num)
+        RECAP_doc = RECAP_case + ".{}.0.pdf".format(self.number)
+
+        return ("https://archive.org/details/"+RECAP_case,
+               "https://archive.org/download/"+RECAP_case+"/"+RECAP_doc)
+    
+    @property
+    def LREF(self):
+        return "gov.uscourts.{}.{}.{}.0".format(self.court, self.case, self.number)
+
+    @property
+    def link(self):
+        """Override link attribute."""
+        return self._link if self.number > 0 else self.docket_link
+
+    def __repr__(self):
+        return "RSSEntry "+str({
+            "title": self.title,
+            "time_filed": self.time_filed,
+            "court": self.court,
+            "case": self.case,
+            "case_name": self.case_name,
+            "pacer_num": self.pacer_num,
+            "docket_link": self.docket_link,
+            "link": self.link,
+            "number": self.number,
+            "LREF": self.LREF})
 
 
-def make_notifier(creds, email=False, twitter=False):
-    """Make a notifier function with access to credentials, etc.
-"""
-    def notify(entry):
-        if email:
-            send_email(entry, creds['email_account'], creds['email_pass'],
-                              creds['email_to'])
-        if twitter:
-            send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
-                       creds['consumer_key'], creds['consumer_secret'] )
-    return notify
-
-def scrape(court, cases, alias, last_checked, notifier):
-    """Scrape for the given cases in the given court.
+def scrape(court, filter, last_checked, notifier):
+    """Scrape for certain cases in the given court.
 
     Arguments:
     - court: the court to check
-    - cases: list of PACER numbers
-    - alias: dict from PACER numbers to case names
+    - filter: predicate returning whether a case should be reported
     - last_checked: struct_time of when this court was last checked (UTC!)
     - notifier: result of calling make_notifier
 
-    Every PACER number in cases must have an alias, even if it's just "".
-
     Returns when the scraped feed was generated as a datetime object.
     """
-    log(2, "checking {} for entries in ".format(court) +
-           ", ".join(["{} ({})".format(num, alias[num]) for num in cases]) + 
-           " since {} UTC".format(asctime(last_checked)))
-
     feed = get_feed(
             "https://ecf.{}.uscourts.gov/cgi-bin/rss_outside.pl".format(court))
-    log(2, "Feed downloaded.")
-
-    # Build up a dict of entries keyed by the document URL.
-    # This handles when there are multiple RSS entries for
-    # the same document.
-    entries = {}
-    # these have no document URLs and so get special treatment
-    no_doc_entries = []
+    entries = OrderedDict()
 
     last_updated = feed['feed']['updated_parsed']
     if last_updated <= last_checked:
-        # Feed has not been updated since last time.
-        # Exit without scraping.
-        log(2, "Feed has not been updated.")
+        log.debug("Feed has not been updated.")
         return datetime.utcfromtimestamp(timegm(last_updated))
 
     for entry in feed['entries']:
         if entry['published_parsed'] < last_checked:
             # We have checked all new entries.
+            log.debug("Read all new entries.")
             break
  
-        # see if any cases of interest show up
-        case_num = entry['link'].split("?")[-1]
-        if case_num in cases:
-            # print raw dict to stdout for debugging/testing purposes
-            log(0, entry)
+        if filter(entry):
+            log.info(entry)
 
-            info = parse_entry(entry)
+            info = RSSEntry(entry) 
 
-            # override the case name if we have a manually-set one
-            case_name = alias[case_num]
-            if len(case_name) > 1:
-                info['case'] = case_name
-
-            if info['link'] == '?':
-                no_doc_entries.append(info)
-            elif info['link'] in entries:
-                entries[info['link']]['description'] += " // "+info['description']
+            if info.link in entries:
+                entries[info.link].title += " // "+info.title
             else:
-                entries[info['link']] = info
+                entries[info.link] = info
 
-    for e in (list(entries.values())+no_doc_entries)[::-1]:
-        log(1, "reporting the following:")
-        log(1, e)
+    for e in reversed(list(entries.values())):
+        log.info("reporting the following:")
+        log.info(e)
         notifier(e)
 
-    log(2, "Scrape of {} completed.".format(court))
+    log.debug("Scrape of {} completed.".format(court))
     return datetime.utcfromtimestamp(timegm(last_updated))
 
 ###################
@@ -266,24 +306,45 @@ def read_cases(filename):
             cases[court] = [case]
         aliases[case] = name
 
-    # conn.commit() # this is unnecessary as we do no writes
     c.close()
 
     return cases, aliases
 
+def sql_notifier(entry, db):
+    """Log reported entries to an SQLite3 database."""
+    if entry.number == 0:
+        # Abort --- it won't have a sensible LREF
+        return
+
+    conn = sqlite3.connect(db)
+    c = conn.cursor()
+    c.execute("""INSERT INTO filings
+                 (time, lref, case_name, number, title, pacer)
+                 VALUES (?, ?, ?, ?, ?, ?)""",
+              (timegm(entry.time_filed), entry.LREF, entry.case_name,
+                  entry.number, entry.title, entry.link))
+
+    conn.commit()
+    c.close()
+
+    log.debug("sql-logged {}".format(entry.LREF))
+
+def make_notifier(creds, sql_db):
+    """Make a notifier function with access to credentials, etc.
+    
+    Modify this to add/remove custom notifiers."""
+    def notify(entry):
+        send_tweet(entry, creds['oauth_token'], creds['oauth_secret'],
+                   creds['consumer_key'], creds['consumer_secret'] )
+        sql_notifier(entry, sql_db)
+
+    return notify
+
 if __name__ == '__main__':
-    log(0, "Starting...")
-    log(0, "We are process {}".format(os.getpid()))
-
-    # set up a SIGTERM handler
-    def quit(signal, frame):
-        log(0, "Received SIGTERM. Quitting.\n--------------------\n")
-        sys.exit(0)
-    signal.signal(signal.SIGTERM, quit)
-
     # get command-line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", action='store')
+    parser.add_argument("--log", action='store')
     parser.add_argument("--verbose", "-v", action='count')
     parser.add_argument("--email", action='store_true')
     parser.add_argument("--twitter", action='store_true')
@@ -294,21 +355,73 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     DB = args.db
-    LOG_LEVEL = args.verbose
+    log_location = args.log
+    verbosity = min(3, args.verbose) # verbosity breaks after -vvv
  
-    notifier = make_notifier(email=args.email, twitter=args.twitter, creds = {
-        'email_account': args.e_from,
-        'email_pass': args.e_pass,
-        'email_to': args.e_to,
+    notifier = make_notifier(creds = {
         'oauth_token': args.t_oauth_token,
         'oauth_secret': args.t_oauth_secret,
         'consumer_key': args.t_consumer_key,
         'consumer_secret': args.t_consumer_secret
-    })    
+    },
+    sql_db="malibu-filings.db")    
+
+    # set up a logger (separate from notifier)
+    log = logging.getLogger("pacerrssscraper-malibu")
+    log.setLevel(logging.DEBUG)
+
+    log_format = logging.Formatter(fmt="[{asctime}] * {levelname}: {message}",
+            datefmt="%a %b %d %X %Y %Z", style="{")
+    # use UTC time instead of local time since
+    # the RSS feeds' times are given in UTC
+    log_format.converter = gmtime
+
+    log_stdout = logging.StreamHandler()
+    log_stdout.setLevel(logging.ERROR - 10*verbosity)
+    log_stdout.setFormatter(log_format)
+    log.addHandler(log_stdout)
+
+    if log_location:
+        # WatchedFileHandler allows for the log file
+        # to be modified or even moved underneath us.
+        log_file = logging.handlers.WatchedFileHandler(log_location)
+        log_file.setLevel(logging.ERROR - 10*verbosity)
+        log_file.setFormatter(log_format)
+        log.addHandler(log_file)
 
     # ------------------------------
 
+    log.critical("Starting...")
+    log.info("We are process {}".format(os.getpid()))
+
+    # set up a SIGTERM handler
+    def quit(signal, frame):
+        log.critical("Received SIGTERM. Quitting.\n--------------------\n")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, quit)
+    signal.signal(signal.SIGINT, quit)
+
+    # ------------------------------
+
+    RSS_COURTS = ["almd", "alsd", "ared", "arwd", "cacd", "cand", "ctd",
+              "dcd", "flmd", "flsd", "gamd", "gud", "idd", "ilcd",
+              "ilnd", "innd", "iand", "iasd", "ksd", "kywd", "laed",
+              "lamd", "lawd", "mied", "miwd", "moed", "mowd", "mtd",
+              "ned", "nhd", "njd", "nyed", "nynd", "nced", "ncmd",
+              "ncwd", "nmid", "ohnd", "ohsd", "okwd", "paed", "pawd",
+              "prd", "rid", "sdd", "tned", "tnmd", "txed", "txsd",
+              "utd", "vtd", "vid", "vawd", "wvnd", "wied", "wiwd"]
+
+    MALIBU_COURTS = ["cacd", "caed", "casd", "cod", "dcd", "flmd",
+        "flnd", "fsd", "ilcd", "ilnd", "innd", "insd", "mdd", "mied",
+        "miwd", "njd", "nyed", "nysd", "ohsd", "paed", "pamd", "txnd",
+        "vaed", "wied", "wiwd"]
+
+    # RSS_COURTS & MALIBU_COURTS
+    MALIBU_RSS_COURTS = ['njd', 'innd', 'mied', 'cacd', 'wiwd', 'nyed', 'wied', 'ohsd', 'ilnd', 'miwd', 'ilcd', 'flmd', 'dcd', 'paed']
+
     # Number of minutes to wait between checks of a given court.
+    # This could probably be tuned somewhat.
     CHECK_INTERVAL = timedelta(minutes=35)
 
     last_updated = {}
@@ -317,46 +430,102 @@ if __name__ == '__main__':
     # Main loop
     while True:
         # Load case and court information from database
-        cases, aliases = read_cases(os.path.dirname(os.path.realpath(__file__))+"/"+DB)
+        if DB:
+            cases, aliases = read_cases(os.path.dirname(os.path.realpath(__file__))+"/"+DB)
+        else:
+            # In the absence of a provided database file, we assume that there isn't
+            # a pre-generated list of cases to look at.
+            cases, aliases = {}, {}
+        
+        for court in RSS_COURTS:
+            if court not in cases:
+                cases[court] = []
 
-        # initialize any new courts
-        old_log_level, LOG_LEVEL = LOG_LEVEL, 0
         for court in (cases.keys() - next_check.keys()):
-            log(0, "Adding {}.".format(court))
-            last_updated[court] = scrape(court, cases[court], aliases, gmtime(), notifier)
-            next_check[court] = last_updated[court] + CHECK_INTERVAL
-        # delete any removed courts
-        for court in (next_check.keys() - cases.keys()):
-            log(0, "Removing {}.".format(court))
-            del next_check[court]
-            del last_updated[court]
-        LOG_LEVEL = old_log_level
+            log.info("Adding {}.".format(court))
 
+            # suppress most logging in this next part
+            # (scrape does a bunch of logging that we're
+            #  not interested in right now)
+            logging.disable(logging.ERROR)
+            try:
+                # we're not really trying to scrape, we're just getting
+                # when it was last updated (which scrape() returns)
+                last_updated[court] = scrape(court, lambda x: False, gmtime(), lambda x: None)
+            except Exception:
+                # in the case of errors, just set last_updated
+                # to... something...
+                #
+                # (last_updated will end up syncing to the court's
+                #  actual update schedule later, so we'll be fine)
+                last_updated[court] = datetime.utcnow()
+
+            # re-enable logging
+            logging.disable(logging.NOTSET)
+
+            next_check[court] = last_updated[court] + CHECK_INTERVAL
+
+        # error check
+        for court in MALIBU_RSS_COURTS:
+            assert court in cases.keys(), court+" "+str(cases)
 
         now = datetime.utcnow()
 
         courts_to_check = list(filter(lambda c: next_check[c] < now, next_check));
-        log(1, "Checking {}...".format(", ".join(courts_to_check)))
+
+        log.info("Checking {}...".format(", ".join(courts_to_check)))
 
         for court in courts_to_check:
             try:
-                last_updated[court] = scrape(court, cases[court], aliases,
+                last_updated[court] = scrape(court,
+                                             lambda entry: "malibu media" in entry['title'].lower(),
                                              last_updated[court].timetuple(),
                                              notifier) 
                 next_check[court] = last_updated[court] + CHECK_INTERVAL
-            except:
-                # Never allow an exception during scraping to kill the program
-                traceback.print_exc()
+            except socket.timeout:
+                # treat timeouts specially because they seem to happen a lot
+                log.warning("Timed out while getting feed for {}.".format(court))
                 continue
-            
-            # Never let next_check[court] be in the past.
-            # (That would otherwise happen in the case of, e.g., CACD,
-            #  which updates hourly rather than half-hourly.)
-            if next_check[court] < now:
-                next_check[court] = now + CHECK_INTERVAL
+            except URLError as e:
+                if len(e.args) > 0 and type(e.args[0]) == socket.timeout:
+                    log.warning("Timed out while getting feed for {}.".format(court))
+                else:
+                    # treat like generic Exception, see below
+                    log.exception(court)
+                continue
+            except SAXException as e:
+                # Means we got invalid XML.
+                log.warning("Invalid XML in feed for {}.".format(court))
 
-            log(2, "{} will be next checked at {} UTC.".format(court,
+                # We could use log.exception(), but I don't really
+                # care for the whole stack trace (it isn't even
+                # a problem in this code, after all :P).
+                # Just print out the exception, which will contain
+                # a line and column number.
+                log.info(e)
+            except Exception as e:
+                # traceback is printed automatically by logger
+                log.exception(court)
+                continue
+
+            # A note on error handling here:
+            #
+            # With continue statements above, courts that hit errors
+            # will be queried again in five minutes, rather than in
+            # CHECK_INTERVAL. If the continue statements were to
+            # be removed, then the code below would ensure that they
+            # get checked no sooner than CHECK_INTERVAL.
+
+
+            # Don't let next_check[court] be in the past.
+            #
+            # Without this, certain courts get clobbered
+            while next_check[court] < now:
+                next_check[court] += CHECK_INTERVAL
+
+            log.debug("{} will be next checked at {} UTC.".format(court,
                                     asctime(next_check[court].timetuple())))
-        log(1, "Checks complete.")
+        log.info("Checks complete.")
+
         # keep at least a modicum of sanity
         sleep(300)
