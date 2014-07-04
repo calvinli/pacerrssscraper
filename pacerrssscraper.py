@@ -38,12 +38,10 @@ from calendar import timegm
 import sys
 import os
 import signal
-from twitter import * # https://github.com/sixohsix/twitter/tree/master
 import smtplib
 from email.mime.text import MIMEText
 import re
 import argparse
-import sqlite3
 import traceback
 import socket
 from urllib.error import URLError
@@ -52,6 +50,8 @@ from collections import OrderedDict
 import logging, logging.handlers
 import html.parser
 # from html import unescape   # for python3.4.0+
+from twitter import * # https://github.com/sixohsix/twitter/tree/master
+import sqlite3 
 
 # PACER servers frequently have problems.
 # Ensure that connections don't hang.
@@ -162,9 +162,10 @@ class RSSEntry:
         # (Entries routinely lack several of these fields.)
 
         # get the link itself (to the actual document)
-        p = re.compile("href=\"(.*)\"") 
+        # (this also strips the query strings)
+        p = re.compile("href=\"(.*)\?(.*)\"") 
         r = p.search(entry['description'])
-        self._link = r.group(1) if r else ""
+        self._link = unescape(r.group(1)) if r else ""
 
         # extract the document number
         p = re.compile(">([0-9]+)<") 
@@ -187,17 +188,16 @@ class RSSEntry:
         self.pacer_num = r.group(1) if r else 0
         # 0 is potentially a valid PACER number though, so beware
 
-        self.docket_link = entry['id']
+        self.docket_link = unescape(entry['id'])
 
         self.case_name = unescape(" ".join(entry['title'].split(" ")[1:]))
 
         self.case = entry['title'].split(" ")[0].replace(":", "-")
-        # strip judge initials out
-        self.case = self.case.split("-")
-        for part in self.case[3:]:
-            if part.isalpha():
-                self.case.remove(part)
-        self.case = "-".join(self.case)
+        
+        # strip off judge initials and criminal case sub-numbers
+        self.case = self.case.split("-")[:4]
+        # restore colon
+        self.case = self.case[0] + ":" + "-".join(self.case[1:])
 
         self.time_filed = entry['published_parsed']
 
@@ -223,7 +223,8 @@ class RSSEntry:
     
     @property
     def LREF(self):
-        return "gov.uscourts.{}.{}.{}.0".format(self.court, self.case, self.number)
+        return "gov.uscourts.{}.{}.{}.0".format(self.court, self.case.replace(":", "-"),
+                                                self.number)
 
     @property
     def link(self):
@@ -276,6 +277,10 @@ def scrape(court, filter, last_checked, notifier):
             info = RSSEntry(entry) 
 
             if info.link in entries:
+                # This deals with criminal cases which have sub-cases.
+                if entries[info.link].title == info.title:
+                    continue
+
                 entries[info.link].title += " // "+info.title
             else:
                 entries[info.link] = info
@@ -489,6 +494,8 @@ if __name__ == '__main__':
             except URLError as e:
                 if len(e.args) > 0 and type(e.args[0]) == socket.timeout:
                     log.warning("Timed out while getting feed for {}.".format(court))
+                elif len(e.args) > 0 and type(e.args[0]) == ConnectionRefusedError:
+                    log.warning("Connection refused for {}.".format(court))
                 else:
                     # treat like generic Exception, see below
                     log.exception(court)
