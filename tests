@@ -1,0 +1,52 @@
+Unit and regression tests for pacerrssscraper
+===============================================
+
+>>> from pacerrssscraper import *
+
+``RSSEntry`` constructor
+-------------------------------------
+
+This tests the regexes in the ``RSSEntry`` constructor,
+XML entity decoding, and as a side-effect, most of the
+time-handling code as well.
+
+This does *not* test any of the notifier code, or indeed
+any of the scraper logic.
+
+
+* Example RSS entry (converted to ``dict`` form with fields
+  that we don't use excised):
+
+>>> e = {'id': 'https://ecf.cand.uscourts.gov/cgi-bin/DktRpt.pl?123456&100',
+...  'link': 'https://ecf.cand.uscourts.gov/cgi-bin/DktRpt.pl?264581',
+...  'published_parsed': (2014, 7, 4, 0, 0, 0, 0, 0, 0),
+...  'summary': '[Order Order &amp; Ord&#233;r!] (<a href="https://ecf.cand.uscourts.gov/doc1/000123456789?caseid=123456&amp;de_seq_num=100">50</a>)',
+...  'title': '3:14-cv-123456 Plaintiff v. Definitely Guilty Guy'}
+>>> r = RSSEntry(e)
+>>> r 
+RSSEntry {'case': '3:14-cv-123456',
+ 'case_name': 'Plaintiff v. Definitely Guilty Guy',
+ 'court': 'cand',
+ 'docket_link': 'https://ecf.cand.uscourts.gov/cgi-bin/DktRpt.pl?123456&100',
+ 'link': 'https://ecf.cand.uscourts.gov/doc1/000123456789',
+ 'lref': 'gov.uscourts.cand.3-14-cv-123456.50.0',
+ 'number': 50,
+ 'pacer_num': '264581',
+ 'time_filed': 'Fri Jul 04 00:00:00 2014 UTC',
+ 'title': 'Order Order & Ordér!'}
+
+Try again with a degenerate entry (no PDF document)
+
+>>> e['summary'] = '[Order Order &amp; Ord&#233;r!] random junk'
+>>> r = RSSEntry(e)
+>>> r
+RSSEntry {'case': '3:14-cv-123456',
+ 'case_name': 'Plaintiff v. Definitely Guilty Guy',
+ 'court': 'cand',
+ 'docket_link': 'https://ecf.cand.uscourts.gov/cgi-bin/DktRpt.pl?123456&100',
+ 'link': 'https://ecf.cand.uscourts.gov/cgi-bin/DktRpt.pl?123456&100',
+ 'lref': 'gov.uscourts.cand.3-14-cv-123456.0.0',
+ 'number': 0,
+ 'pacer_num': '264581',
+ 'time_filed': 'Fri Jul 04 00:00:00 2014 UTC',
+ 'title': 'Order Order & Ordér!'}

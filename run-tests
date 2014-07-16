@@ -1,0 +1,4 @@
+#! /usr/bin/env python3
+import doctest
+
+doctest.testfile("tests", optionflags=doctest.NORMALIZE_WHITESPACE)

@@ -1,17 +1,46 @@
 pacerrssscraper
 =================
 
-Daemon that reads PACER RSS feeds and looks for updates in selected cases.
+Customizable and extensible daemon that reads the court filing RSS feeds
+of the [Public Access to Court Electronic Records](http://www.pacer.gov/)
+(PACER) system and permits the reporting of metadata on federal court filings
+in near real-time to arbitrary locations.
 
-If `--twitter` is set it will tweet about entries it finds; if `--email` is
-set it will email new entries.
-(NB: Both require certain command-line arguments to be set.)
+For documentation beyond what is provided below,
+see the comments in the source code.
 
-The program now takes in the name of an SQLite3 database.
-The database should have a table `cases`,
-`cases (court TEXT, number INTEGER, name TEXT)`.
+A version of this program runs on twitter as [@pacerrssscraper](https://twitter.com/pacerrssscraper).
 
-(For reference, my current setup is this:
+### License ###
+The source code of this program is licensed under the MIT License,
+the terms of which are in the source and at http://opensource.org/licenses/MIT.
+
+Use
+------
+To use this program for your own purposes, fork this and write your own
+`make_notifier` (together with any custom notifiers) and `entry_filter`,
+modify the main loop as necessary, and supply a `VERSION` string.
+(Search for `****REPLACE THIS****`.)
+
+A few notifiers are included. The default configuration (which you will need
+to change) checks all RSS-enabled district courts and reports no entries.
+
+### Twitter use ###
+Using this on twitter requires the creation of an application with write
+access; see [apps.twitter.com](https://apps.twitter.com/). Then give
+this program the provided four API keys. *Never put API keys in public
+source code.*
+
+Inputs
+---------
+Which courts this script checks, and which cases it will report, are up to you;
+this is decided in the `entry_filter` function.
+
+One way is reporting all cases on a particular list; this is what `read_cases`
+is for. It reads in data from an SQLite3 database. The database should have
+a table `cases`, with schema `cases (court TEXT, number INTEGER, name TEXT)`.
+
+Example from [@pacerrssscraper](https://twitter.com/pacerrssscraper):
 ```
 sqlite> SELECT * FROM cases ORDER BY name DESC;
 court  number    name                                    
@@ -19,31 +48,19 @@ court  number    name
 cacd   543744    Ingenuity13 v. Doe #Prenda              
 ilnd   280638    Duffy v. Godfread #Prenda               
 ctd    98605     AFH v. Olivas #Prenda                   
-cand   259654    (not © related) Stewart et al v. Gogo  
 ilnd   284511    #Prenda v. Internets                    
-miwd   70867     #MalibuMedia v. Roy 12-617              
-flsd   404544    #MalibuMedia v. Pelizzo 12-22768        
-innd   73135     #MalibuMedia v. Nguyen 13-163           
-mied   281102    #MalibuMedia v. House 13-12218          
-flsd   434643    #MalibuMedia v. Doe 14-20216            
-ilnd   287384    #MalibuMedia v. Doe 13-6372             
-ilnd   287310    #MalibuMedia v. Doe 13-6312             
-wied   63285     #MalibuMedia v. Doe 13-536              
-ilnd   287444    #MalibuMedia v. Doe 13-50287            
-ilnd   287443    #MalibuMedia v. Doe 13-50286            
-ilnd   285400    #MalibuMedia v. Doe 13-4968             
-ilnd   283630    #MalibuMedia v. Doe 13-3707             
-ilnd   283541    #MalibuMedia v. Doe 13-3648             
-ilnd   282178    #MalibuMedia v. Doe 13-2710             
-ilnd   282170    #MalibuMedia v. Doe 13-2702
 ```
-`name`, which is required, overrides the official name of the case. I use hashtags because `name` is included in tweets.)
+`name`, which is required, overrides the official name of the case.
+(The hashtags are for tweeting.)
 
-*New in the latest version*: Cases can be added or removed while the daemon is running; there is no need to restart the daemon.
+Another way would be keyword-matching on the case name
+or document title. For a full list of fields which can
+be matched on, see the documentation for the `RSSEntry`
+class.
 
 List of US District Courts with RSS feeds 
 -----------------------------------------
-As given at http://www.pacer.gov/psco/cgi-bin/links.pl.
+Derived from http://www.pacer.gov/psco/cgi-bin/links.pl.
 
 These are the only courts that this script can monitor.
 
