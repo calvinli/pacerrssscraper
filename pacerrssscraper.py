@@ -363,16 +363,8 @@ def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
 
     # Shorten the case name
     rules = [
-        ("Malibu Media", "#MalibuMedia"),
-        ("MALIBU MEDIA", "#MalibuMedia"),
-        (", LLC", ""),
-        (" LLC", ""),
+        # ****REPLACE THIS****
         (" v. ", " v "),
-        ("JOHN DOE SUBSCRIBER ASSIGNED IP ADDRESS ", ""),
-        ("John Doe Subscriber Assigned IP Address ", ""),
-        (" Subscriber Assigned IP Address", ""),
-        (" subscriber assigned IP address", ""),
-        ("JOHN DOE", "Doe"),
         ("John Doe", "Doe")
     ]
 
@@ -388,10 +380,6 @@ def send_tweet(entry, oauth_token, oauth_secret, consumer_key, consumer_secret):
 
     message = "{} ({}): #{} {}. ".format(
         case, entry.court, number, title)
-
-    if len(message) > 120:
-        log.critical("Bad tweet truncation!")
-        return
 
     message += link
 
