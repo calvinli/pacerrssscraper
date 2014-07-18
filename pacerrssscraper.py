@@ -11,8 +11,9 @@
  modify the main loop as necessary, and supply a VERSION string.
  (Search for "****REPLACE THIS****".)
 
- A few notifiers are included. The default configuration (which you will need
- to change) checks all RSS-available district courts and reports no entries.
+ A few notifiers are included. The default configuration checks only
+ for cases that are specified on a list (see `read_cases`) and uses a
+ dummy notifier.
 
 
  Author: Calvin Li
@@ -65,8 +66,7 @@ from urllib.error import URLError
 from xml.sax import SAXException
 from collections import OrderedDict
 import logging, logging.handlers
-import html.parser
-# from html import unescape   # for python3.4.0+
+from html import unescape
 # https://github.com/sixohsix/twitter/tree/master
 from twitter import Twitter, OAuth, TwitterHTTPError
 import json
@@ -74,14 +74,11 @@ import sqlite3
 
 # pylint: disable=C0103,R0902,W0142,W0232,W0621,W0703
 
-VERSION = "generic-0.1"
+VERSION = "generic-0.2"
 
 # PACER servers frequently have problems.
 # Ensure that connections don't hang.
 socket.setdefaulttimeout(10)
-
-### REMOVE FOR PYTHON 3.4.0+ ###
-unescape = html.parser.HTMLParser().unescape
 
 
 class RSSEntry:
@@ -457,11 +454,13 @@ def read_cases(filename):
     and compiles it to two python dictionaries:
         cases   : court name --> set of PACER numbers
         aliases : tuple (court, number) --> short name
+
+    See: list_filter
     """
     cases = {}
     aliases = {}
 
-    c = json.load(open(filename))
+    c = json.load(open(filename, 'r'))
 
     for entry in c:
         court = entry['court']
@@ -476,10 +475,31 @@ def read_cases(filename):
 
     return cases, aliases
 
+def list_filter(cases, aliases):
+    """The scrape filter corresponding to read_cases.
+    """
+    def entry_filter(entry):
+        """
+        Return True for entries matching a case in `cases`,
+        and modify their titles according to `aliases`.
+        """
+        court = entry.court
+        num = int(entry.pacer_num)
+        if court in cases and num in cases[court]:
+            alias = aliases[(court, num)]
+            if alias:
+                entry.title = alias
+            return True
+        else:
+            return False
+
+    return entry_filter
+
+
 if __name__ == '__main__':
     # get command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db", action='store')
+    parser.add_argument("--case-list", action='store')
     parser.add_argument("--log", action='store')
     parser.add_argument("--verbose", "-v", action='count', default=0)
     parser.add_argument("--email", action='store_true')
@@ -490,7 +510,7 @@ if __name__ == '__main__':
         parser.add_argument(arg, action='store', default="")
     args = parser.parse_args()
 
-    db_location = args.db
+    case_list = args.case_list
     log_location = args.log
     verbosity = min(3, args.verbose) # verbosity breaks after -vvv
 
@@ -504,8 +524,7 @@ if __name__ == '__main__':
         email={
             'from': args.e_from,
             'to': args.e_to,
-            'pass': args.e_pass},
-        db=db_location
+            'pass': args.e_pass}
     )
 
     # set up a logger (separate from notifier)
@@ -565,22 +584,32 @@ if __name__ == '__main__':
     last_updated = {}
     next_check = {}
 
+    #
     # Main loop
+    #
     while True:
         # Load case and court information from database
-        if db_location:
-            cases, aliases = read_cases(
-                os.path.dirname(os.path.realpath(__file__))+"/"+db_location)
+        if case_list:
+            try:
+                cases, aliases = read_cases(case_list)
+            except ValueError:
+                log.exception("")
+                cases, aliases = {}, {}
         else:
-            # In the absence of a provided database file, we assume that
-            # there isn't a pre-generated list of cases to look at.
             cases, aliases = {}, {}
 
-        # ****REPLACE THIS****
-        for court in RSS_COURTS:
-            if court not in cases:
-                cases[court] = []
+        # The default filter uses the provided case list,
+        # unless one wasn't provided, in which case it
+        # uses an empty case list.
+        default_filter = list_filter(cases, aliases)
 
+        # This adds *all* RSS-enabled courts to the list of courts
+        # to watch. You should ****REPLACE THIS****
+        #for court in RSS_COURTS:
+        #    if court not in cases:
+        #        cases[court] = set()
+
+        # Add courts to last_updated and next_check if necessary.
         for court in cases.keys() - next_check.keys():
             log.info("Adding {}.".format(court))
 
@@ -606,6 +635,10 @@ if __name__ == '__main__':
 
             next_check[court] = last_updated[court] + CHECK_INTERVAL
 
+
+        #
+        # Do the actual checking.
+        #
         now = dtnow()
 
         courts_to_check = [c for c in next_check if next_check[c] < now]
@@ -619,7 +652,7 @@ if __name__ == '__main__':
 
                 last_updated[court] = scrape(
                     court,
-                    lambda entry: False, # ****REPLACE THIS****
+                    default_filter, # You may want to ****REPLACE THIS****
                     last_updated[court],
                     notifier)
                 next_check[court] = last_updated[court] + CHECK_INTERVAL

@@ -15,6 +15,20 @@ A version of this program runs on twitter as [@pacerrssscraper](https://twitter.
 The source code of this program is licensed under the MIT License,
 the terms of which are in the source and at http://opensource.org/licenses/MIT.
 
+Dependencies
+--------------
+**Python 3.4.0 or newer**.
+
+The following Python packages. Install by downloading them and running
+`python3 setup.py install`. Use the `--user` flag if you do not have root.
+
+* **feedparser**: Available at https://pypi.python.org/pypi/feedparser.
+* **Twitter** (optional): *Python Twitter Tools*, https://github.com/sixohsix/twitter.
+    You will also need API keys (see below).
+
+The recommended **MySQL** wrapper library, should you need one, is the official Oracle
+`mysql.connector` package, "platform-independent" version. Install as above.
+
 Use
 ------
 To use this program for your own purposes, fork this and write your own
@@ -37,21 +51,17 @@ Which courts this script checks, and which cases it will report, are up to you;
 this is decided in the `entry_filter` function.
 
 One way is reporting all cases on a particular list; this is what `read_cases`
-is for. It reads in data from an SQLite3 database. The database should have
-a table `cases`, with schema `cases (court TEXT, number INTEGER, name TEXT)`.
+is for. It takes in a JSON list like
 
-Example from [@pacerrssscraper](https://twitter.com/pacerrssscraper):
+```json
+[
+  {"name": "Ingenuity13 v. Doe #Prenda", "number": 543744, "court": "cacd"},
+  {"name": "Duffy v. Godfread #Prenda", "number": 280638, "court": "ilnd"},
+  {"name": "#Prenda v. Internets", "number": 284511, "court": "ilnd"},
+]
 ```
-sqlite> SELECT * FROM cases ORDER BY name DESC;
-court  number    name                                    
------  --------  ----------------------------------------
-cacd   543744    Ingenuity13 v. Doe #Prenda              
-ilnd   280638    Duffy v. Godfread #Prenda               
-ctd    98605     AFH v. Olivas #Prenda                   
-ilnd   284511    #Prenda v. Internets                    
-```
-`name`, which is required, overrides the official name of the case.
-(The hashtags are for tweeting.)
+
+The list can be changed while the program is running.
 
 Another way would be keyword-matching on the case name
 or document title. For a full list of fields which can
