@@ -69,6 +69,7 @@ import html.parser
 # from html import unescape   # for python3.4.0+
 # https://github.com/sixohsix/twitter/tree/master
 from twitter import Twitter, OAuth, TwitterHTTPError
+import json
 import sqlite3
 
 # pylint: disable=C0103,R0902,W0142,W0232,W0621,W0703
@@ -443,23 +444,35 @@ def make_notifier(*args, **kwargs):
     return notify
 
 def read_cases(filename):
-    """Read in a list of cases (PACER numbers) and aliases for them."""
+    """Read in a list of cases (PACER numbers) and aliases for them.
+
+    This takes a basic unstructured JSON list of cases to follow, like
+
+    [
+      {"name": "Ingenuity13 v. Doe #Prenda", "number": 543744, "court": "cacd"},
+      {"name": "Duffy v. Godfread #Prenda", "number": 280638, "court": "ilnd"},
+      {"name": "#Prenda v. Internets", "number": 284511, "court": "ilnd"},
+    ]
+
+    and compiles it to two python dictionaries:
+        cases   : court name --> set of PACER numbers
+        aliases : tuple (court, number) --> short name
+    """
     cases = {}
     aliases = {}
 
-    conn = sqlite3.connect(filename)
-    c = conn.cursor()
-    c.execute("SELECT * FROM cases;")
+    c = json.load(open(filename))
 
-    for court, case, name in c:
-        case = str(case)
+    for entry in c:
+        court = entry['court']
+        number = entry['number']
+        name = entry['name']
+
         if court in cases:
-            cases[court].append(case)
+            cases[court].add(number)
         else:
-            cases[court] = [case]
-        aliases[case] = name
-
-    c.close()
+            cases[court] = {number}
+        aliases[(court, number)] = name
 
     return cases, aliases
 
