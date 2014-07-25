@@ -488,7 +488,7 @@ def list_filter(cases, aliases):
         if court in cases and num in cases[court]:
             alias = aliases[(court, num)]
             if alias:
-                entry.title = alias
+                entry.case_name = alias
             return True
         else:
             return False
