@@ -268,7 +268,7 @@ def scrape(court, entry_filter, last_checked, notifier):
     latest_entry_time = st2dt(feed['entries'][0]['published_parsed'])
     if latest_entry_time > last_updated:
         log.error("{} IS LYING ABOUT UPDATE TIME! ".format(court) +
-                  "Claimed {} but latest entry is from {}.".format(
+                  "Claimed {} but latest entry is from {}. ".format(
                       dtfmt(last_updated), dtfmt(latest_entry_time))+
                   "Attempting to recover...")
         last_updated = latest_entry_time
