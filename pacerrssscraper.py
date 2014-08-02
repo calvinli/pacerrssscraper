@@ -74,7 +74,7 @@ import sqlite3
 
 # pylint: disable=C0103,R0902,W0142,W0232,W0621,W0703
 
-VERSION = "generic-0.2"
+VERSION = "generic-0.3"
 
 # PACER servers frequently have problems.
 # Ensure that connections don't hang.
