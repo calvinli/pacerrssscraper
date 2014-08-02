@@ -64,7 +64,7 @@ import argparse
 import socket
 from urllib.error import URLError
 from xml.sax import SAXException
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import logging, logging.handlers
 from html import unescape
 # https://github.com/sixohsix/twitter/tree/master
@@ -576,9 +576,22 @@ if __name__ == '__main__':
                   "prd", "rid", "sdd", "tned", "tnmd", "txed", "txsd",
                   "utd", "vtd", "vid", "vawd", "wvnd", "wied", "wiwd"]
 
-    # Number of minutes to wait between checks of a given court.
+    # Time to wait between checks of a given court.
     # This could probably be tuned somewhat.
-    CHECK_INTERVAL = timedelta(minutes=35)
+    SCRAPE_INTERVAL = timedelta(minutes=35)
+
+    # Time to wait between checks.
+    # Setting this too low may make the PACER people mad.
+    # Setting this too high makes reporting bursty.
+    CHECK_INTERVAL = timedelta(minutes=5)
+
+    # Table for exponential backoff in case of timeouts
+    #
+    # Sometimes courts go down for extended periods of time
+    # (up to several days). We don't want to clobber them
+    # every CHECK_INTERVAL in such cases.
+    backoff = defaultdict(lambda: 1)
+
 
     # court -> datetime
     last_updated = {}
@@ -633,7 +646,7 @@ if __name__ == '__main__':
             # re-enable logging
             logging.disable(logging.NOTSET)
 
-            next_check[court] = last_updated[court] + CHECK_INTERVAL
+            next_check[court] = last_updated[court] + SCRAPE_INTERVAL
 
 
         #
@@ -655,15 +668,23 @@ if __name__ == '__main__':
                     default_filter, # You may want to ****REPLACE THIS****
                     last_updated[court],
                     notifier)
-                next_check[court] = last_updated[court] + CHECK_INTERVAL
+                next_check[court] = last_updated[court] + SCRAPE_INTERVAL
+
+                backoff[court] = 1
             except socket.timeout:
                 # treat timeouts specially because they seem to happen a lot
                 log.warning(
                     "Timed out while getting feed for {}.".format(court))
+
+                next_check[court] += backoff[court]*CHECK_INTERVAL
+                backoff[court] *= 2
                 continue
             except URLError as e:
                 log.warning("Failed to get feed for {}:".format(court))
                 log.warning(e.__class__.__name__+": "+str(e))
+
+                next_check[court] += backoff[court]*CHECK_INTERVAL
+                backoff[court] *= 2
                 continue
             except SAXException as e:
                 # Means we got invalid XML.
@@ -675,29 +696,23 @@ if __name__ == '__main__':
                 log.exception(court)
                 continue
 
-            # A note on error handling here:
-            #
-            # With continue statements above, courts that hit errors
-            # will be queried again in five minutes, rather than in
-            # CHECK_INTERVAL. If the continue statements were to
-            # be removed, then the code below would ensure that they
-            # get checked no sooner than CHECK_INTERVAL.
+            # NB: the continue statements in the above except blocks
+            # prevent the check below from running.
 
 
             # Don't let next_check[court] be in the past.
             # Without this, certain courts get clobbered.
             #
             # (Note: Another way of handling this is to keep incrementing
-            #  by CHECK_INTERVAL until next_check > now. Not sure which
+            #  by SCRAPE_INTERVAL until next_check > now. Not sure which
             #  method is better, or even if there's a difference.)
             now = dtnow()
             if next_check[court] < now:
-                next_check[court] = now + CHECK_INTERVAL
+                next_check[court] = now + SCRAPE_INTERVAL
 
             log.debug("{} will be next checked at {}.".format(
                 court, dtfmt(next_check[court])))
 
         log.info("Checks complete.")
 
-        # keep at least a modicum of sanity
-        sleep(300)
+        sleep(CHECK_INTERVAL.total_seconds())
