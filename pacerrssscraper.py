@@ -150,7 +150,7 @@ class RSSEntry:
         self.pacer_num = match.group(1) if match else 0
         # 0 is potentially a valid PACER number though, so beware
 
-        self.docket_link = unescape(entry['id'])
+        self.docket_link = unescape(entry['id'].split("&")[0])
 
         self.case_name = unescape(" ".join(entry['title'].split(" ")[1:]))
 
