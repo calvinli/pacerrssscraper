@@ -554,7 +554,7 @@ if __name__ == '__main__':
     # ------------------------------
 
     log.critical("Starting...")
-    log.info("We are process {}".format(os.getpid()))
+    log.critical("We are process {}".format(os.getpid()))
 
     # set up a SIGTERM/SIGINT handler so that this process
     # can be killed with Ctrl+C or kill(1).
