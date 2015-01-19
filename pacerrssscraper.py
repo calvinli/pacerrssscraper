@@ -274,7 +274,7 @@ def scrape(court, entry_filter, last_checked, notifier):
         last_updated = latest_entry_time
 
     if last_updated <= last_checked:
-        log.debug("Feed has not been updated.")
+        log.debug("{} has not been updated.".format(court))
         return last_updated
 
     log.debug("{} was updated at {}.".format(court, dtfmt(last_updated)))
@@ -282,7 +282,7 @@ def scrape(court, entry_filter, last_checked, notifier):
     for entry in feed['entries']:
         if st2dt(entry['published_parsed']) <= last_checked:
             # We have checked all new entries.
-            log.debug("Read all new entries.")
+            log.debug("Read all new entries for {}.".format(court))
             break
 
         info = RSSEntry(entry)
