@@ -23,6 +23,7 @@ The following Python packages. Install by downloading them and running
 `python3 setup.py install`. Use the `--user` flag if you do not have root.
 
 * **feedparser**: Available at https://pypi.python.org/pypi/feedparser.
+* **BeautifulSoup**: Available at http://www.crummy.com/software/BeautifulSoup/.
 * **Twitter** (optional): *Python Twitter Tools*, https://github.com/sixohsix/twitter.
     You will also need API keys (see below).
 

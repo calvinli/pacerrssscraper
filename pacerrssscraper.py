@@ -71,10 +71,11 @@ from html import unescape
 from twitter import Twitter, OAuth, TwitterHTTPError
 import json
 import sqlite3
+from bs4 import BeautifulSoup
 
 # pylint: disable=C0103,R0902,W0142,W0232,W0621,W0703
 
-VERSION = "generic-0.3"
+VERSION = "generic-0.4"
 
 # PACER servers frequently have problems.
 # Ensure that connections don't hang.
@@ -140,6 +141,9 @@ class RSSEntry:
         # title
         match = self.p_title.search(entry['summary'])
         self.title = unescape(match.group(1)) if match else "?"
+        # PACER likes to put HTML in the title. Take it out.
+        if "<" in self.title:
+            self.title = ''.join(BeautifulSoup(self.title).findAll(text=True))
 
         # court
         match = self.p_court.search(entry['link'])
