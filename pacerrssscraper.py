@@ -403,10 +403,10 @@ def sql_notifier(entry, db):
     conn = sqlite3.connect(db)
     c = conn.cursor()
     c.execute("""INSERT INTO filings
-                 (time, lref, case_name, number, title, pacer)
-                 VALUES (?, ?, ?, ?, ?, ?)""",
+                 (time, lref, case_name, number, title, pacer, court)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
               (timegm(entry.time_filed), entry.LREF, entry.case_name,
-               entry.number, entry.title, entry.link))
+               entry.number, entry.title, entry.link, entry.court))
 
     conn.commit()
     c.close()
