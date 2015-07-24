@@ -158,6 +158,8 @@ class RSSEntry:
         self.docket_link = unescape(entry['id'].split("&")[0])
 
         self.case_name = unescape(" ".join(entry['title'].split(" ")[1:]))
+        if "<" in self.case_name:
+            self.case_name = ''.join(BeautifulSoup(self.case_name).findAll(text=True))
 
         self.case = entry['title'].split(" ")[0].replace(":", "-")
 
