@@ -54,6 +54,7 @@ from time import gmtime, sleep
 from datetime import datetime, timedelta, tzinfo
 from calendar import timegm # inverse of gmtime
 import sys
+import traceback
 import os
 import signal
 import smtplib
@@ -555,10 +556,6 @@ if __name__ == '__main__':
         log_file.setFormatter(log_format)
         log.addHandler(log_file)
 
-    # ------------------------------
-
-    log.critical("Starting...")
-    log.critical("We are process {}".format(os.getpid()))
 
     # set up a SIGTERM/SIGINT handler so that this process
     # can be killed with Ctrl+C or kill(1).
@@ -569,7 +566,15 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, cb_quit)
     signal.signal(signal.SIGINT, cb_quit)
 
+    # Override sys.excepthook
+    def exception_handler(exc_type, value, tb):
+        log.error(*traceback.format_exception(exc_type, value, tb))
+    sys.excepthook = exception_handler
+
     # ------------------------------
+
+    log.critical("Starting...")
+    log.critical("We are process {}".format(os.getpid()))
 
     RSS_COURTS = ["almd", "alsd", "akd", "ared", "arwd", "cacd",
                   "cand", "casd", "ctd", "ded", "dcd", "flmd",
