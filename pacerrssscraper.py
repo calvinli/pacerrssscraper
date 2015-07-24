@@ -120,7 +120,7 @@ class RSSEntry:
     # Pre-compiled regular expressions used in every invocation of __init__()
     p_link = re.compile(r'href="(.*)\?(.*)"')
     p_number = re.compile(r'>([0-9]+)<')
-    p_title = re.compile(r'^\[(.+)\]')
+    p_title = re.compile(r'\[(.+)\]')
     p_court = re.compile(r'ecf\.([a-z]+)\.')
     p_pacer_num = re.compile(r'DktRpt.pl\?([0-9]+)')
 
