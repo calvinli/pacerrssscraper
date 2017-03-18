@@ -1,3 +1,14 @@
+Note to readers
+-----------------
+*The code here is presented for informational purposes only, and is by no means
+the ideal way to do what it does. (This program was written in 2013 for a
+very limited purpose, and will probably not be helpful to you.)*
+
+*It is not recommended that you attempt to run this code yourself if you need
+to monitor PACER feeds: for that, I recommend an RSS feed reader service
+with keyword alert capability.*
+
+
 pacerrssscraper
 =================
 
